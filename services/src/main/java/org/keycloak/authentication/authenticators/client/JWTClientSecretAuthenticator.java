@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 
@@ -36,6 +37,7 @@ import org.keycloak.common.util.Time;
 import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.models.AuthenticationExecutionModel.Requirement;
 import org.keycloak.models.SingleUseTokenStoreProvider;
+import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.models.ClientModel;
@@ -63,6 +65,14 @@ public class JWTClientSecretAuthenticator extends AbstractClientAuthenticator {
 
     @Override
     public void authenticateClient(ClientAuthenticationFlowContext context) {
+
+        //KEYCLOAK-19461: Needed for quarkus resteasy implementation throws exception when called with mediaType authentication/json in OpenShiftTokenReviewEndpoint
+        if(!isFormDataRequest(context.getHttpRequest())) {
+            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "invalid_client", "Parameter client_assertion_type is missing");
+            context.challenge(challengeResponse);
+            return;
+        }
+
         MultivaluedMap<String, String> params = context.getHttpRequest().getDecodedFormParameters();
 
         String clientAssertionType = params.getFirst(OAuth2Constants.CLIENT_ASSERTION_TYPE);
@@ -94,7 +104,11 @@ public class JWTClientSecretAuthenticator extends AbstractClientAuthenticator {
             RealmModel realm = context.getRealm();
             String clientId = token.getSubject();
             if (clientId == null) {
-                throw new RuntimeException("Can't identify client. Issuer missing on JWT token");
+                throw new RuntimeException("Can't identify client. Subject missing on JWT token");
+            }
+
+            if (!clientId.equals(token.getIssuer())) {
+                throw new RuntimeException("Issuer mismatch. The issuer should match the subject");
             }
 
             context.getEvent().client(clientId);
@@ -108,6 +122,20 @@ public class JWTClientSecretAuthenticator extends AbstractClientAuthenticator {
 
             if (!client.isEnabled()) {
                 context.failure(AuthenticationFlowError.CLIENT_DISABLED, null);
+                return;
+            }
+
+            String expectedSignatureAlg = OIDCAdvancedConfigWrapper.fromClientModel(client).getTokenEndpointAuthSigningAlg();
+            if (jws.getHeader().getAlgorithm() == null || jws.getHeader().getAlgorithm().name() == null) {
+                Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "invalid_client", "invalid signature algorithm");
+                context.challenge(challengeResponse);
+                return;
+            }
+
+            String actualSignatureAlg = jws.getHeader().getAlgorithm().name();
+            if (expectedSignatureAlg != null && !expectedSignatureAlg.equals(actualSignatureAlg)) {
+                Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.BAD_REQUEST.getStatusCode(), "invalid_client", "invalid signature algorithm");
+                context.challenge(challengeResponse);
                 return;
             }
 

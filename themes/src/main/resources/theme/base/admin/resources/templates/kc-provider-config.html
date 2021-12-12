@@ -3,7 +3,7 @@
         <label class="col-md-2 control-label">{{:: option.label | translate}}</label>
 
         <div class="col-md-6" data-ng-if="option.type == 'String'">
-            <input kc-no-reserved-chars class="form-control" type="text" data-ng-model="config[ option.name ]" >
+            <input class="form-control" type="text" data-ng-model="config[ option.name ]" >
         </div>
         <div class="col-md-6" data-ng-if="option.type == 'Password'">
             <input class="form-control" type="password" data-ng-model="config[ option.name ]" >
@@ -16,13 +16,26 @@
                 <option value="" selected> {{:: 'selectOne' | translate}} </option>
             </select>
         </div>
+        <div class="col-md-6" data-ng-if="option.type == 'MultivaluedList'">
+            <input ui-select2="option.mvOptions" ng-model="config[ option.name ]" data-placeholder="{{:: 'selectMultiple' | translate}}..."/>
+        </div>
         <div class="col-md-6" data-ng-if="option.type == 'Role'">
             <div class="row">
                 <div class="col-md-8">
-                    <input kc-no-reserved-chars class="form-control" type="text" data-ng-model="config[ option.name ]" >
+                    <input class="form-control" type="text" data-ng-model="config[ option.name ]" >
                 </div>
                 <div class="col-md-2">
                     <button type="button" data-ng-click="openRoleSelector(option.name, config)" class="btn btn-default" tooltip-placement="top" tooltip-trigger="mouseover mouseout" tooltip="{{:: 'selectRole.tooltip' | translate}}">{{:: 'selectRole.label' | translate}}</button>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6" data-ng-if="option.type == 'Group'">
+            <div class="row">
+                <div class="col-md-8">
+                    <input class="form-control" type="text" data-ng-model="config[ option.name ]" >
+                </div>
+                <div class="col-md-2">
+                    <button type="button" data-ng-click="openGroupSelector(option.name, config)" class="btn btn-default" tooltip-placement="top" tooltip-trigger="mouseover mouseout" tooltip="{{:: 'selectGroup.tooltip' | translate}}">{{:: 'selectGroup.label' | translate}}</button>
                 </div>
             </div>
         </div>
@@ -52,7 +65,7 @@
         </div>
 
         <div class="col-md-6" data-ng-if="option.type == 'Text'">
-            <textarea class="form-control" data-ng-model="config[ option.name ]"/>
+            <textarea class="form-control" data-ng-model="config[ option.name ]"></textarea>
         </div>
 
         <div class="col-md-6" data-ng-if="option.type == 'Map'">

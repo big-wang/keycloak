@@ -37,7 +37,6 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.ClientResource;
-import org.keycloak.common.Profile;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.mappers.ScriptBasedOIDCProtocolMapper;
 import org.keycloak.representations.AccessToken;
@@ -45,7 +44,6 @@ import org.keycloak.representations.idm.ProtocolMapperRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.provider.ScriptProviderDescriptor;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
-import org.keycloak.testsuite.ProfileAssume;
 import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.util.ContainerAssume;
 import org.keycloak.testsuite.util.OAuthClient;
@@ -80,13 +78,15 @@ public class DeployedScriptMapperTest extends AbstractTestRealmKeycloakTest {
     private Deployer deployer;
 
     @Before
-    public void configureFlows() {
+    public void configureFlows() throws Exception {
         deployer.deploy(SCRIPT_DEPLOYMENT_NAME);
+        reconnectAdminClient();
     }
 
     @After
-    public void onAfter() {
+    public void onAfter() throws Exception {
         deployer.undeploy(SCRIPT_DEPLOYMENT_NAME);
+        reconnectAdminClient();
     }
 
     @Override
@@ -102,7 +102,7 @@ public class DeployedScriptMapperTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
-    @EnableFeature(SCRIPTS)
+    @EnableFeature(value = SCRIPTS, skipRestart = true, executeAsLast = false)
     public void testTokenScriptMapping() {
         {
             ClientResource app = findClientResourceByClientId(adminClient.realm("test"), "test-app");

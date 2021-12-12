@@ -10,8 +10,14 @@ public class ClientRepresentation {
     private boolean userConsentRequired;
     private boolean inUse;
     private boolean offlineAccess;
+    private String rootUrl;
     private String baseUrl;
+    private String effectiveUrl;
     private ConsentRepresentation consent;
+    private String logoUri;
+    private String policyUri;
+    private String tosUri;
+
 
     public String getClientId() {
         return clientId;
@@ -61,6 +67,14 @@ public class ClientRepresentation {
         this.offlineAccess = offlineAccess;
     }
 
+    public String getRootUrl() {
+        return rootUrl;
+    }
+
+    public void setRootUrl(String rootUrl) {
+        this.rootUrl = rootUrl;
+    }
+
     public String getBaseUrl() {
         return baseUrl;
     }
@@ -69,11 +83,43 @@ public class ClientRepresentation {
         this.baseUrl = baseUrl;
     }
 
+    public String getEffectiveUrl() {
+       return effectiveUrl;
+    }
+
+    public void setEffectiveUrl(String effectiveUrl) {
+        this.effectiveUrl = effectiveUrl;
+    }
+
     public ConsentRepresentation getConsent() {
         return consent;
     }
 
     public void setConsent(ConsentRepresentation consent) {
         this.consent = consent;
+    }
+
+    public String getLogoUri() {
+        return logoUri;
+    }
+
+    public void setLogoUri(String logoUri) {
+        this.logoUri = logoUri;
+    }
+
+    public String getPolicyUri() {
+        return policyUri;
+    }
+
+    public void setPolicyUri(String policyUri) {
+        this.policyUri = policyUri;
+    }
+
+    public String getTosUri() {
+        return tosUri;
+    }
+
+    public void setTosUri(String tosUri) {
+        this.tosUri = tosUri;
     }
 }

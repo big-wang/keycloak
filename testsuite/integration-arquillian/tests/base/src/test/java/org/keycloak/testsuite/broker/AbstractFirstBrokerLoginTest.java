@@ -9,34 +9,45 @@ import com.google.common.collect.ImmutableMap;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.jboss.arquillian.drone.api.annotation.Drone;
+import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.IdentityProviderResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.broker.provider.HardcodedUserSessionAttributeMapper;
+import org.keycloak.events.Details;
+import org.keycloak.events.EventType;
+import org.keycloak.models.IdentityProviderMapperModel;
+import org.keycloak.models.IdentityProviderSyncMode;
 import org.keycloak.models.UserModel;
+import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.IdentityProviderMapperRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.Assert;
+import org.keycloak.testsuite.AssertEvents;
+import org.keycloak.testsuite.forms.VerifyProfileTest;
 import org.keycloak.testsuite.pages.LoginPasswordUpdatePage;
 import org.keycloak.testsuite.util.MailServer;
 import org.keycloak.testsuite.util.MailServerConfiguration;
 import org.keycloak.testsuite.util.SecondBrowser;
+import org.keycloak.userprofile.UserProfileContext;
 import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
+import org.openqa.selenium.htmlunit.HtmlUnitDriver;
 import org.openqa.selenium.support.PageFactory;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.keycloak.testsuite.broker.BrokerRunOnServerUtil.assertHardCodedSessionNote;
 import static org.keycloak.testsuite.broker.BrokerRunOnServerUtil.configureAutoLinkFlow;
 import static org.keycloak.testsuite.broker.BrokerTestConstants.USER_EMAIL;
+import static org.keycloak.testsuite.broker.BrokerTestTools.getConsumerRoot;
+import static org.keycloak.testsuite.broker.BrokerTestTools.getProviderRoot;
 import static org.keycloak.testsuite.broker.BrokerTestTools.waitForPage;
 import static org.keycloak.testsuite.util.MailAssert.assertEmailAndGetUrl;
 
@@ -50,6 +61,20 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     @Drone
     @SecondBrowser
     protected WebDriver driver2;
+    
+    @Rule
+    public AssertEvents events = new AssertEvents(this);
+    
+    protected void enableDynamicUserProfile() {
+        
+        RealmResource rr = adminClient.realm(bc.consumerRealmName());
+        
+        RealmRepresentation testRealm = rr.toRepresentation();
+        
+        VerifyProfileTest.enableDynamicUserProfile(testRealm);
+
+        rr.update(testRealm);
+    }
 
 
     /**
@@ -59,7 +84,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     public void testErrorExistingUserWithUpdateProfile() {
         createUser("consumer");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -83,7 +108,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
         String existingUser = createUser("consumer");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "account already exists", false);
@@ -121,7 +146,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         String existingUser = createUser("consumer");
         String anotherUser = createUser("foobar", "foo@bar.baz");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "account already exists", false);
@@ -160,7 +185,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::disableExistingUser);
         String existingUser = createUser("consumer");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         assertEquals("Authenticate to link your account with " + bc.getIDPAlias(), loginPage.getInfoMessage());
@@ -192,7 +217,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
         String existingUser = createUser("consumer");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "account already exists", false);
@@ -228,7 +253,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::disableExistingUser);
         String existingUser = createUser("consumer");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         assertEquals("Authenticate to link your account with " + bc.getIDPAlias(), loginPage.getInfoMessage());
@@ -266,11 +291,11 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         providerUser.update(userResource);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
 
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
@@ -284,7 +309,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         // Click browser 'back' and then 'forward' and then continue
         driver.navigate().back();
         assertTrue(driver.getPageSource().contains("You are already logged in."));
-        driver.navigate().forward();
+        driver.navigate().forward(); // here a new execution ID is added to the URL using JS, see below
         idpConfirmLinkPage.assertCurrent();
 
         // Click browser 'back' on review profile page
@@ -292,6 +317,11 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         waitForPage(driver, "update account information", false);
         updateAccountInformationPage.assertCurrent();
         driver.navigate().back();
+        // JS-capable browsers (i.e. all except HtmlUnit) add a new execution ID to the URL which then causes the login expire page to appear (because the old ID and new ID don't match)
+        if (!(driver instanceof HtmlUnitDriver)) {
+            loginExpiredPage.assertCurrent();
+            loginExpiredPage.clickLoginContinueLink();
+        }
         waitForPage(driver, "update account information", false);
         updateAccountInformationPage.assertCurrent();
         updateAccountInformationPage.updateAccountInformation(bc.getUserEmail(), "FirstName", "LastName");
@@ -343,7 +373,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         providerUser.update(userResource);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
 
         logInWithBroker(bc);
 
@@ -397,7 +427,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         providerUser.update(userResource);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "account already exists", false);
@@ -443,18 +473,6 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     }
 
 
-    @Test
-    public void testFirstBrokerLoginFlowUpdateProfileOff() {
-        updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
-
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
-        logInWithBroker(bc);
-
-        waitForAccountManagementTitle();
-        accountUpdateProfilePage.assertCurrent();
-    }
-
-
     /**
      * Refers to in old test suite: org.keycloak.testsuite.broker.AbstractFirstBrokerLoginTest#testErrorPageWhenDuplicationNotAllowed_updateProfileOff
      */
@@ -468,7 +486,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "account already exists", false);
@@ -485,7 +503,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         Assert.assertTrue(updateAccountInformationPage.isCurrent());
@@ -507,7 +525,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     public void testRequiredUpdatedPassword() {
         updateExecutions(AbstractBrokerTest::enableRequirePassword);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         Assert.assertTrue(updateAccountInformationPage.isCurrent());
@@ -537,7 +555,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         consumerUser.setEmail(bc.getUserEmail());
         userResource.update(consumerUser);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -563,6 +581,10 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateAccountInformationPage.updateAccountInformation("test", "test@localhost.com", "FirstName", "LastName");
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("test@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("test", accountUpdateProfilePage.getUsername());
     }
 
 
@@ -582,6 +604,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         hardCodedSessionNoteMapper.setIdentityProviderAlias(bc.getIDPAlias());
         hardCodedSessionNoteMapper.setIdentityProviderMapper(HardcodedUserSessionAttributeMapper.PROVIDER_ID);
         hardCodedSessionNoteMapper.setConfig(ImmutableMap.<String, String>builder()
+                .put(IdentityProviderMapperModel.SYNC_MODE, IdentityProviderSyncMode.IMPORT.toString())
                 .put(HardcodedUserSessionAttributeMapper.ATTRIBUTE_VALUE, "sessionvalue")
                 .put(HardcodedUserSessionAttributeMapper.ATTRIBUTE, "user-session-attr")
                 .build());
@@ -589,7 +612,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         Response response = idpResource.addMapper(hardCodedSessionNoteMapper);
         response.close();
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
 
         logInWithBroker(bc);
 
@@ -616,7 +639,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         realmRep.setRegistrationEmailAsUsername(true);
         realm.update(realmRep);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         Assert.assertTrue(updateAccountInformationPage.isCurrent());
@@ -649,7 +672,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         String linkedUserId = createUser("consumer");
 
         //test
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -698,7 +721,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         configureSMTPServer();
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -732,10 +755,10 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
         createUser(bc.providerRealmName(), "no-email", "password", "FirstName", "LastName", null);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
@@ -771,7 +794,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         identityProviderResource.update(idpRep);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -808,7 +831,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         configureSMTPServer();
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -845,7 +868,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         userResource.update(consumerUser);
         configureSMTPServer();
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         //link account by email
@@ -867,7 +890,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         driver.navigate().to(url);
         waitForPage(driver, "you are already logged in.", false);
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
         driver.navigate().to(url);
         waitForPage(driver, "confirm linking the account testuser of identity provider " + bc.getIDPAlias() + " with your account.", false);
@@ -890,7 +913,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         userResource.update(consumerUser);
         configureSMTPServer();
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         //link account by email
@@ -920,7 +943,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         //create user on consumer's site who should be linked later
         String linkedUserId = createUser("consumer");
 
-        driver.navigate().to(getLoginUrl(bc.consumerRealmName(), "broker-app"));
+        driver.navigate().to(getLoginUrl(getConsumerRoot(), bc.consumerRealmName(), "broker-app"));
         logInWithBroker(bc);
 
         waitForPage(driver, "update account information", false);
@@ -957,7 +980,85 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         //test if the user has verified email
         assertTrue(consumerRealm.users().get(linkedUserId).toRepresentation().isEmailVerified());
     }
+    
+    @Test
+    public void testEventsOnUpdateProfileNoEmailChange() {
+        updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
 
+        createUser(bc.providerRealmName(), "no-first-name", "password", null, "LastName", "no-first-name@localhost.com");
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+        log.debug("Clicking social " + bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
+        waitForPage(driver, "sign in to", true);
+        Assert.assertTrue("Driver should be on the provider realm page right now",
+                driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
+        log.debug("Logging in");
+        loginPage.login("no-first-name", "password");
+
+        waitForPage(driver, "update account information", false);
+        
+        updateAccountInformationPage.assertCurrent();
+        updateAccountInformationPage.updateAccountInformation("FirstName", "LastName");
+        waitForAccountManagementTitle();
+        accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("no-first-name@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("no-first-name", accountUpdateProfilePage.getUsername());
+
+        RealmRepresentation consumerRealmRep = adminClient.realm(bc.consumerRealmName()).toRepresentation();
+        events.expectAccount(EventType.LOGIN).realm(consumerRealmRep).user(Matchers.any(String.class)).session(Matchers.any(String.class))
+            .detail(Details.IDENTITY_PROVIDER_USERNAME, "no-first-name")
+            .detail(Details.REGISTER_METHOD, "broker")
+            .assertEvent(getFirstConsumerEvent());
+    }
+
+    @Test
+    public void testEventsOnUpdateProfileWithEmailChange() {
+        updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
+
+        createUser(bc.providerRealmName(), "no-first-name", "password", null, "LastName", "no-first-name@localhost.com");
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+        log.debug("Clicking social " + bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
+        waitForPage(driver, "sign in to", true);
+        Assert.assertTrue("Driver should be on the provider realm page right now",
+                driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
+        log.debug("Logging in");
+        loginPage.login("no-first-name", "password");
+
+        waitForPage(driver, "update account information", false);
+        
+        updateAccountInformationPage.assertCurrent();
+        updateAccountInformationPage.updateAccountInformation("new-email@localhost.com","FirstName", "LastName");
+        waitForAccountManagementTitle();
+        accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("new-email@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("no-first-name", accountUpdateProfilePage.getUsername());
+
+        RealmRepresentation consumerRealmRep = adminClient.realm(bc.consumerRealmName()).toRepresentation();
+        events.expectAccount(EventType.UPDATE_EMAIL).realm(consumerRealmRep).user((String)null).session((String) null)
+            .detail(Details.CONTEXT, UserProfileContext.IDP_REVIEW.name())
+            .detail(Details.IDENTITY_PROVIDER_USERNAME, "no-first-name")
+            .detail(Details.PREVIOUS_EMAIL, "no-first-name@localhost.com")
+            .detail(Details.UPDATED_EMAIL, "new-email@localhost.com")
+            .assertEvent(getFirstConsumerEvent());
+        events.expectAccount(EventType.LOGIN).realm(consumerRealmRep).user(Matchers.any(String.class)).session(Matchers.any(String.class))
+            .detail(Details.IDENTITY_PROVIDER_USERNAME, "no-first-name")
+            .detail(Details.REGISTER_METHOD, "broker")
+            .assertEvent(events.poll());
+    }
+
+    protected EventRepresentation getFirstConsumerEvent() {
+        String providerRealmId = adminClient.realm(bc.providerRealmName()).toRepresentation().getId();
+        EventRepresentation er = events.poll();
+        while(er != null && providerRealmId.equals(er.getRealmId())) {
+            er = events.poll();
+        }
+        return er;
+    }
 
     /**
      * Refers to in old test suite: org.keycloak.testsuite.broker.AbstractKeycloakIdentityProviderTest.testSuccessfulAuthenticationUpdateProfileOnMissing_missingEmail
@@ -967,28 +1068,33 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
 
         createUser(bc.providerRealmName(), "no-first-name", "password", null, "LastName", "no-first-name@localhost.com");
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
         loginPage.login("no-first-name", "password");
 
         waitForPage(driver, "update account information", false);
+        
         updateAccountInformationPage.assertCurrent();
         updateAccountInformationPage.updateAccountInformation("FirstName", "LastName");
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("no-first-name@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("no-first-name", accountUpdateProfilePage.getUsername());
 
-        logoutFromRealm(bc.providerRealmName());
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getProviderRoot(), bc.providerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
         createUser(bc.providerRealmName(), "no-last-name", "password", "FirstName", null, "no-last-name@localhost.com");
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
@@ -999,14 +1105,18 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateAccountInformationPage.updateAccountInformation("FirstName", "LastName");
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("no-last-name@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("no-last-name", accountUpdateProfilePage.getUsername());
 
-        logoutFromRealm(bc.providerRealmName());
-        logoutFromRealm(bc.consumerRealmName());
+        logoutFromRealm(getProviderRoot(), bc.providerRealmName());
+        logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
         createUser(bc.providerRealmName(), "no-email", "password", "FirstName", "LastName", null);
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
@@ -1018,6 +1128,10 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("no-email@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("no-email", accountUpdateProfilePage.getUsername());
     }
 
 
@@ -1029,10 +1143,10 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
         updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
         createUser(bc.providerRealmName(), "all-info-set", "password", "FirstName", "LastName", "all-info-set@localhost.com");
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
-        waitForPage(driver, "log in to", true);
+        waitForPage(driver, "sign in to", true);
         Assert.assertTrue("Driver should be on the provider realm page right now",
                 driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
         log.debug("Logging in");
@@ -1040,6 +1154,10 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
 
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("FirstName", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("LastName", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals("all-info-set@localhost.com", accountUpdateProfilePage.getEmail());
+        Assert.assertEquals("all-info-set", accountUpdateProfilePage.getUsername());
     }
 
 
@@ -1050,10 +1168,14 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     public void testWithoutUpdateProfile() {
         updateExecutions(AbstractBrokerTest::disableUpdateProfileOnFirstLogin);
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
         waitForAccountManagementTitle();
         accountUpdateProfilePage.assertCurrent();
+        Assert.assertEquals("", accountUpdateProfilePage.getFirstName());
+        Assert.assertEquals("", accountUpdateProfilePage.getLastName());
+        Assert.assertEquals(bc.getUserEmail(), accountUpdateProfilePage.getEmail());
+        Assert.assertEquals(bc.getUserLogin(), accountUpdateProfilePage.getUsername());
     }
 
 
@@ -1065,7 +1187,7 @@ public abstract class AbstractFirstBrokerLoginTest extends AbstractInitializedBa
     public void testAutoLinkAccountWithBroker() {
         testingClient.server(bc.consumerRealmName()).run(configureAutoLinkFlow(bc.getIDPAlias()));
 
-        driver.navigate().to(getAccountUrl(bc.consumerRealmName()));
+        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
         logInWithBroker(bc);
 
         RealmResource realm = adminClient.realm(bc.consumerRealmName());

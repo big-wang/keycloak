@@ -19,6 +19,7 @@ package org.keycloak.services.managers;
 
 import org.jboss.logging.Logger;
 import org.keycloak.common.ClientConnection;
+import org.keycloak.common.util.ServerCookie.SameSiteAttributeValue;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
@@ -30,7 +31,6 @@ import org.keycloak.sessions.RootAuthenticationSessionModel;
 import org.keycloak.sessions.StickySessionEncoderProvider;
 
 import javax.ws.rs.core.UriInfo;
-import java.util.AbstractMap.SimpleEntry;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -43,7 +43,7 @@ public class AuthenticationSessionManager {
 
     public static final String AUTH_SESSION_ID = "AUTH_SESSION_ID";
 
-    public static final int AUTH_SESSION_LIMIT = 3;
+    public static final int AUTH_SESSION_COOKIE_LIMIT = 3;
 
     private static final Logger log = Logger.getLogger(AuthenticationSessionManager.class);
 
@@ -147,7 +147,7 @@ public class AuthenticationSessionManager {
         StickySessionEncoderProvider encoder = session.getProvider(StickySessionEncoderProvider.class);
         String encodedAuthSessionId = encoder.encodeSessionId(authSessionId);
 
-        CookieHelper.addCookie(AUTH_SESSION_ID, encodedAuthSessionId, cookiePath, null, null, -1, sslRequired, true);
+        CookieHelper.addCookie(AUTH_SESSION_ID, encodedAuthSessionId, cookiePath, null, null, -1, sslRequired, true, SameSiteAttributeValue.NONE);
 
         log.debugf("Set AUTH_SESSION_ID cookie with value %s", encodedAuthSessionId);
     }
@@ -188,7 +188,7 @@ public class AuthenticationSessionManager {
             AuthenticationManager.expireOldAuthSessionCookie(realm, session.getContext().getUri(), session.getContext().getConnection());
         }
 
-        List<String> authSessionIds = cookiesVal.stream().limit(AUTH_SESSION_LIMIT).collect(Collectors.toList());
+        List<String> authSessionIds = cookiesVal.stream().limit(AUTH_SESSION_COOKIE_LIMIT).collect(Collectors.toList());
 
         if (authSessionIds.isEmpty()) {
             log.debugf("Not found AUTH_SESSION_ID cookie");

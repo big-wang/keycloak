@@ -22,13 +22,16 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.admin.client.resource.ClientResource;
+import org.keycloak.common.util.Base64Url;
 import org.keycloak.common.util.PemUtils;
 import org.keycloak.crypto.AesCbcHmacShaContentEncryptionProvider;
 import org.keycloak.crypto.AesGcmContentEncryptionProvider;
 import org.keycloak.crypto.Algorithm;
 import org.keycloak.crypto.RsaCekManagementProvider;
+import org.keycloak.jose.JOSEHeader;
 import org.keycloak.jose.jwe.JWEConstants;
 import org.keycloak.jose.jwe.JWEException;
+import org.keycloak.jose.jwe.JWEHeader;
 import org.keycloak.jose.jwe.alg.JWEAlgorithmProvider;
 import org.keycloak.jose.jwe.enc.JWEEncryptionProvider;
 import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
@@ -52,8 +55,10 @@ import org.keycloak.testsuite.util.ClientManager;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.OAuthClient.AccessTokenResponse;
 import org.keycloak.testsuite.util.TokenSignatureUtil;
+import org.keycloak.util.JsonSerialization;
 import org.keycloak.util.TokenUtil;
 
+import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.security.PrivateKey;
 import java.util.List;
@@ -110,8 +115,28 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA192CBC_HS384() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS256, JWEConstants.RSA1_5, JWEConstants.A192CBC_HS384);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA256CBC_HS512() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS384, JWEConstants.RSA1_5, JWEConstants.A256CBC_HS512);
+    }
+
+    @Test
     public void testIdTokenEncryptionAlgRSA1_5EncA128GCM() {
         testIdTokenSignatureAndEncryption(Algorithm.RS384, JWEConstants.RSA1_5, JWEConstants.A128GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA192GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.RS512, JWEConstants.RSA1_5, JWEConstants.A192GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA1_5EncA256GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.RS256, JWEConstants.RSA1_5, JWEConstants.A256GCM);
     }
 
     @Test
@@ -122,10 +147,47 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
     }
 
     @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA192CBC_HS384() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS256, JWEConstants.RSA_OAEP, JWEConstants.A192CBC_HS384);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA256CBC_HS512() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS512, JWEConstants.RSA_OAEP, JWEConstants.A256CBC_HS512);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEP256EncA128CBC_HS256() {
+        // add key provider explicitly though DefaultKeyManager create fallback key provider if not exist
+        TokenSignatureUtil.registerKeyProvider("P-521", adminClient, testContext);
+        testIdTokenSignatureAndEncryption(Algorithm.ES512, JWEConstants.RSA_OAEP_256, JWEConstants.A128CBC_HS256);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEP256EncA192CBC_HS384() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS256, JWEConstants.RSA_OAEP_256, JWEConstants.A192CBC_HS384);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEP256EncA256CBC_HS512() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS512, JWEConstants.RSA_OAEP_256, JWEConstants.A256CBC_HS512);
+    }
+
+    @Test
     public void testIdTokenEncryptionAlgRSA_OAEPEncA128GCM() {
         // add key provider explicitly though DefaultKeyManager create fallback key provider if not exist
         TokenSignatureUtil.registerKeyProvider("P-256", adminClient, testContext);
         testIdTokenSignatureAndEncryption(Algorithm.ES256, JWEConstants.RSA_OAEP, JWEConstants.A128GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA192GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS384, JWEConstants.RSA_OAEP, JWEConstants.A192GCM);
+    }
+
+    @Test
+    public void testIdTokenEncryptionAlgRSA_OAEPEncA256GCM() {
+        testIdTokenSignatureAndEncryption(Algorithm.PS512, JWEConstants.RSA_OAEP, JWEConstants.A256GCM);
     }
 
     private void testIdTokenSignatureAndEncryption(String sigAlgorithm, String algAlgorithm, String encAlgorithm) {
@@ -163,6 +225,10 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
             Map<String, String> keyPair = oidcClientEndpointsResource.getKeysAsPem();
             PrivateKey decryptionKEK = PemUtils.decodePrivateKey(keyPair.get("privateKey"));
 
+            // a nested JWT (signed and encrypted JWT) needs to set "JWT" to its JOSE Header's "cty" field
+            JWEHeader jweHeader = (JWEHeader) getHeader(parts[0]);
+            Assert.assertEquals("JWT", jweHeader.getContentType());
+
             // verify and decrypt JWE
             JWEAlgorithmProvider algorithmProvider = getJweAlgorithmProvider(algAlgorithm);
             JWEEncryptionProvider encryptionProvider = getJweEncryptionProvider(encAlgorithm);
@@ -191,19 +257,36 @@ public class IdTokenEncryptionTest extends AbstractTestRealmKeycloakTest {
 
     private JWEAlgorithmProvider getJweAlgorithmProvider(String algAlgorithm) {
         JWEAlgorithmProvider jweAlgorithmProvider = null;
-        if (JWEConstants.RSA1_5.equals(algAlgorithm) || JWEConstants.RSA_OAEP.equals(algAlgorithm) ) {
+        if (JWEConstants.RSA1_5.equals(algAlgorithm) || JWEConstants.RSA_OAEP.equals(algAlgorithm) ||
+                JWEConstants.RSA_OAEP_256.equals(algAlgorithm)) {
             jweAlgorithmProvider = new RsaCekManagementProvider(null, algAlgorithm).jweAlgorithmProvider();
         }
         return jweAlgorithmProvider;
     }
     private JWEEncryptionProvider getJweEncryptionProvider(String encAlgorithm) {
         JWEEncryptionProvider jweEncryptionProvider = null;
-        if (JWEConstants.A128CBC_HS256.equals(encAlgorithm)) {
-            jweEncryptionProvider = new AesCbcHmacShaContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
-        } else if (JWEConstants.A128GCM.equals(encAlgorithm)) {
-            jweEncryptionProvider = new AesGcmContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+        switch(encAlgorithm) {
+            case JWEConstants.A128GCM:
+            case JWEConstants.A192GCM:
+            case JWEConstants.A256GCM:
+                jweEncryptionProvider = new AesGcmContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+                break;
+            case JWEConstants.A128CBC_HS256:
+            case JWEConstants.A192CBC_HS384:
+            case JWEConstants.A256CBC_HS512:
+                jweEncryptionProvider = new AesCbcHmacShaContentEncryptionProvider(null, encAlgorithm).jweEncryptionProvider();
+                break;
         }
         return jweEncryptionProvider;
+    }
+
+    private JOSEHeader getHeader(String base64Header) {
+        try {
+            byte[] decodedHeader = Base64Url.decode(base64Header);
+            return JsonSerialization.readValue(decodedHeader, JWEHeader.class);
+        } catch (IOException ioe) {
+            throw new RuntimeException(ioe);
+        }
     }
 
     @Test

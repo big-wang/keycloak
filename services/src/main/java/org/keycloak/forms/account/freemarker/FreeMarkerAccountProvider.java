@@ -38,7 +38,6 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.utils.FormMessage;
 import org.keycloak.services.util.CacheControlUtil;
-import org.keycloak.theme.BrowserSecurityHeaderSetup;
 import org.keycloak.theme.FreeMarkerException;
 import org.keycloak.theme.FreeMarkerUtil;
 import org.keycloak.theme.Theme;
@@ -50,7 +49,6 @@ import org.keycloak.theme.beans.MessageType;
 import org.keycloak.theme.beans.MessagesPerFieldBean;
 import org.keycloak.utils.MediaType;
 
-import javax.ws.rs.core.CacheControl;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
@@ -217,9 +215,10 @@ public class FreeMarkerAccountProvider implements AccountProvider {
      * @return message bundle for other use
      */
     protected Properties handleThemeResources(Theme theme, Locale locale, Map<String, Object> attributes) {
-        Properties messagesBundle;
+        Properties messagesBundle = new Properties();
         try {
-            messagesBundle = theme.getMessages(locale);
+            messagesBundle.putAll(theme.getMessages(locale));
+            messagesBundle.putAll(realm.getRealmLocalizationTextsByLocale(locale.toLanguageTag()));
             attributes.put("msg", new MessageFormatterMethod(locale, messagesBundle));
         } catch (IOException e) {
             logger.warn("Failed to load messages", e);
@@ -271,7 +270,6 @@ public class FreeMarkerAccountProvider implements AccountProvider {
         try {
             String result = freeMarker.processTemplate(attributes, Templates.getTemplate(page), theme);
             Response.ResponseBuilder builder = Response.status(status).type(MediaType.TEXT_HTML_UTF_8_TYPE).language(locale).entity(result);
-            BrowserSecurityHeaderSetup.headers(builder, realm);
             builder.cacheControl(CacheControlUtil.noCache());
             return builder.build();
         } catch (FreeMarkerException e) {

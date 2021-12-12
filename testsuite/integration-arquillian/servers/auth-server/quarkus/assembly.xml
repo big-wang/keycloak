@@ -42,5 +42,12 @@
             <fileMode>0755</fileMode>
         </fileSet>
     </fileSets>
-
+    <files>
+        <file>
+            <source>src/main/content/conf/cluster-ha.xml</source>
+            <outputDirectory>/auth-server-quarkus/conf</outputDirectory>
+            <destName>cluster-ha.xml</destName>
+            <filtered>true</filtered>
+        </file>
+    </files>
 </assembly>

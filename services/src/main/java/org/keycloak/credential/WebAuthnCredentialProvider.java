@@ -21,6 +21,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import com.webauthn4j.WebAuthnAuthenticationManager;
 import com.webauthn4j.converter.util.ObjectConverter;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.requiredactions.WebAuthnRegisterFactory;
@@ -102,8 +103,9 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
         String credentialId = Base64.encodeBytes(webAuthnModel.getAttestedCredentialData().getCredentialId());
         String credentialPublicKey = credentialPublicKeyConverter.convertToDatabaseColumn(webAuthnModel.getAttestedCredentialData().getCOSEKey());
         long counter = webAuthnModel.getCount();
+        String attestationStatementFormat = webAuthnModel.getAttestationStatementFormat();
 
-        WebAuthnCredentialModel model = WebAuthnCredentialModel.create(getType(), userLabel, aaguid, credentialId, null, credentialPublicKey, counter);
+        WebAuthnCredentialModel model = WebAuthnCredentialModel.create(getType(), userLabel, aaguid, credentialId, null, credentialPublicKey, counter, attestationStatementFormat);
 
         model.setId(webAuthnModel.getCredentialDBId());
 
@@ -141,6 +143,8 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
 
         auth.setCredentialDBId(credential.getId());
 
+        auth.setAttestationStatementFormat(credData.getAttestationStatementFormat());
+
         return auth;
     }
 
@@ -153,7 +157,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
     @Override
     public boolean isConfiguredFor(RealmModel realm, UserModel user, String credentialType) {
         if (!supportsCredentialType(credentialType)) return false;
-        return !session.userCredentialManager().getStoredCredentialsByType(realm, user, credentialType).isEmpty();
+        return session.userCredentialManager().getStoredCredentialsByTypeStream(realm, user, credentialType).count() > 0;
     }
 
 
@@ -164,7 +168,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
         WebAuthnCredentialModelInput context = WebAuthnCredentialModelInput.class.cast(input);
         List<WebAuthnCredentialModelInput> auths = getWebAuthnCredentialModelList(realm, user);
 
-        WebAuthnManager webAuthnManager = WebAuthnManager.createNonStrictWebAuthnManager(); // not special setting is needed for authentication's validation.
+        WebAuthnAuthenticationManager webAuthnAuthenticationManager = new WebAuthnAuthenticationManager();
         AuthenticationData authenticationData = null;
 
         try {
@@ -179,24 +183,29 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
                     );
 
                     // parse
-                    authenticationData = webAuthnManager.parse(context.getAuthenticationRequest());
+                    authenticationData = webAuthnAuthenticationManager.parse(context.getAuthenticationRequest());
                     // validate
                     AuthenticationParameters authenticationParameters = new AuthenticationParameters(
                             context.getAuthenticationParameters().getServerProperty(),
                             authenticator,
                             context.getAuthenticationParameters().isUserVerificationRequired()
                     );
-                    webAuthnManager.validate(authenticationData, authenticationParameters);
+                    webAuthnAuthenticationManager.validate(authenticationData, authenticationParameters);
 
 
                     logger.debugv("response.getAuthenticatorData().getFlags() = {0}", authenticationData.getAuthenticatorData().getFlags());
 
-                    // update authenticator counter
-                    long count = auth.getCount();
                     CredentialModel credModel = getCredentialStore().getStoredCredentialById(realm, user, auth.getCredentialDBId());
                     WebAuthnCredentialModel webAuthnCredModel = getCredentialFromModel(credModel);
-                    webAuthnCredModel.updateCounter(count + 1);
-                    getCredentialStore().updateCredential(realm, user, webAuthnCredModel);
+
+                    // update authenticator counter
+                    // counters are an optional feature of the spec - if an authenticator does not support them, it
+                    // will always send zero. MacOS/iOS does this for keys stored in the secure enclave (TouchID/FaceID)
+                    long count = auth.getCount();
+                    if (count > 0) {
+                        webAuthnCredModel.updateCounter(count + 1);
+                        getCredentialStore().updateCredential(realm, user, webAuthnCredModel);
+                    }
 
                     logger.debugf("Successfully validated WebAuthn credential for user %s", user.getUsername());
                     dumpCredentialModel(webAuthnCredModel, auth);
@@ -220,9 +229,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
 
 
     private List<WebAuthnCredentialModelInput> getWebAuthnCredentialModelList(RealmModel realm, UserModel user) {
-        List<CredentialModel> credentialModels = session.userCredentialManager().getStoredCredentialsByType(realm, user, getType());
-
-        return credentialModels.stream()
+        return session.userCredentialManager().getStoredCredentialsByTypeStream(realm, user, getType())
                 .map(this::getCredentialInputFromCredentialModel)
                 .collect(Collectors.toList());
     }

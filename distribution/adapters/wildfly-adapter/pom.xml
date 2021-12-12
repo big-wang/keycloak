@@ -21,23 +21,13 @@
     <parent>
         <artifactId>keycloak-adapters-distribution-parent</artifactId>
         <groupId>org.keycloak</groupId>
-        <version>9.0.4-SNAPSHOT</version>
+        <version>16.0.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>keycloak-wildfly-adapter-dist</artifactId>
     <packaging>pom</packaging>
     <name>Keycloak Adapter Overlay Distribution</name>
     <description/>
-
-    <repositories>
-        <repository>
-            <id>jboss</id>
-            <url>https://repository.jboss.org/nexus/content/groups/public/</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
 
     <dependencies>
         <dependency>
@@ -118,13 +108,6 @@
                 <assemblyFile>assembly.xml</assemblyFile>
                 <profileExcludes>%regex[(docs/contrib.*)|(docs/examples.*)|(docs/schema.*)]</profileExcludes>
             </properties>
-            <dependencies>
-                <dependency>
-                    <groupId>org.wildfly</groupId>
-                    <artifactId>wildfly-dist</artifactId>
-                    <type>zip</type>
-                </dependency>
-            </dependencies>
             <build>
                 <finalName>${product.name}-${product.filename.version}-eap7-adapter</finalName>
             </build>

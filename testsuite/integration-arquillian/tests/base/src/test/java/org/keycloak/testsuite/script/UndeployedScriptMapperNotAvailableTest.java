@@ -16,8 +16,6 @@
  */
 package org.keycloak.testsuite.script;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.keycloak.common.Profile.Feature.SCRIPTS;
 import static org.keycloak.testsuite.admin.ApiUtil.findClientResourceByClientId;
@@ -38,16 +36,12 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.ClientResource;
-import org.keycloak.protocol.oidc.OIDCLoginProtocol;
-import org.keycloak.protocol.oidc.mappers.ScriptBasedOIDCProtocolMapper;
-import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ProtocolMapperRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.provider.ScriptProviderDescriptor;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
 import org.keycloak.testsuite.util.ContainerAssume;
-import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.util.JsonSerialization;
 
 /**
@@ -79,13 +73,15 @@ public class UndeployedScriptMapperNotAvailableTest extends AbstractTestRealmKey
     private Deployer deployer;
 
     @Before
-    public void configureFlows() {
+    public void configureFlows() throws Exception {
         deployer.deploy(SCRIPT_DEPLOYMENT_NAME);
+        reconnectAdminClient();
     }
 
     @After
-    public void onAfter() {
+    public void onAfter() throws Exception {
         deployer.undeploy(SCRIPT_DEPLOYMENT_NAME);
+        reconnectAdminClient();
     }
 
     @Override
@@ -94,10 +90,9 @@ public class UndeployedScriptMapperNotAvailableTest extends AbstractTestRealmKey
     }
 
     @Test
-    @EnableFeature(SCRIPTS)
+    @EnableFeature(value = SCRIPTS, skipRestart = true, executeAsLast = false)
     public void testMapperNotRecognizedWhenDisabled() throws Exception {
         ClientResource app = findClientResourceByClientId(adminClient.realm("test"), "test-app");
-
         {
             ProtocolMapperRepresentation mapper = createScriptMapper("test-script-mapper1", "computed-via-script",
                     "computed-via-script", "String", true, true, "'hello_' + user.username", false);
@@ -106,9 +101,10 @@ public class UndeployedScriptMapperNotAvailableTest extends AbstractTestRealmKey
 
             app.getProtocolMappers().createMapper(mapper).close();
         }
-
         deployer.undeploy(SCRIPT_DEPLOYMENT_NAME);
-        assertTrue(app.getProtocolMappers().getMappers().isEmpty());
-        assertTrue(app.getProtocolMappers().getMappersPerProtocol(app.toRepresentation().getProtocol()).isEmpty());
+        reconnectAdminClient();
+        ClientResource cl = findClientResourceByClientId(adminClient.realm("test"), "test-app");
+        assertTrue(cl.getProtocolMappers().getMappers().isEmpty());
+        assertTrue(cl.getProtocolMappers().getMappersPerProtocol(cl.toRepresentation().getProtocol()).isEmpty());
     }
 }
