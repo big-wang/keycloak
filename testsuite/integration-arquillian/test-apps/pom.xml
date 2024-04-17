@@ -5,7 +5,7 @@
     <parent>
         <artifactId>integration-arquillian</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -16,19 +16,14 @@
 
     <modules>
         <module>test-apps-dist</module>
-        <module>photoz</module>
         <module>hello-world-authz-service</module>
         <module>servlet-authz</module>
         <module>servlet-policy-enforcer</module>
         <module>servlets</module>
+        <module>servlets-jakarta</module>
         <module>app-profile-jee</module>
         <module>cors</module>
-        <module>fuse</module>
         <module>spring-boot-adapter-app</module>
+        <module>fuse</module>
     </modules>
-
-    <properties>
-        <maven.compiler.target>1.7</maven.compiler.target>
-        <maven.compiler.source>1.7</maven.compiler.source>
-    </properties>
 </project>

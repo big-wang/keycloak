@@ -21,7 +21,7 @@
     <parent>
         <artifactId>integration-arquillian-test-apps-fuse-parent</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
 
     <modelVersion>4.0.0</modelVersion>
@@ -38,10 +38,9 @@
             javax.servlet;version="[3.1,5)",
             javax.servlet.http;version="[3.1,5)",
             javax.net.ssl,
-            org.apache.camel.*,
             io.undertow.*;version="[1.4,3)",
             org.apache.camel;version="[2.13,3)",
-            org.keycloak.*;version="${project.version}",
+            org.keycloak.*;version="${fuse.adapter.version}",
             org.osgi.service.blueprint,
             org.osgi.service.blueprint.container
         </keycloak.osgi.import>

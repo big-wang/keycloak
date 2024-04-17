@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian-servers-app-server-jboss</artifactId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -43,7 +43,6 @@
 
         <app.server.oidc.adapter.artifactId>keycloak-eap6-adapter-dist</app.server.oidc.adapter.artifactId>
         <app.server.saml.adapter.artifactId>keycloak-saml-eap6-adapter-dist</app.server.saml.adapter.artifactId>
-        
         <skip.apply.offline.cli>true</skip.apply.offline.cli>
         <skip.configure.clustered.scenario>true</skip.configure.clustered.scenario>
     </properties>
@@ -62,18 +61,6 @@
             <groupId>org.keycloak.testsuite</groupId>
             <artifactId>integration-arquillian-util</artifactId>
             <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.keycloak</groupId>
-            <artifactId>keycloak-eap6-adapter-dist</artifactId>
-            <version>${project.version}</version>
-            <type>zip</type>
-        </dependency>
-        <dependency>
-            <groupId>org.keycloak</groupId>
-            <artifactId>keycloak-saml-eap6-adapter-dist</artifactId>
-            <version>${project.version}</version>
-            <type>zip</type>
         </dependency>
     </dependencies>
 

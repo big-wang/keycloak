@@ -16,45 +16,63 @@
  */
 package org.keycloak.testsuite.webauthn;
 
+import org.jboss.arquillian.drone.api.annotation.Drone;
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.authentication.authenticators.browser.PasswordFormFactory;
 import org.keycloak.authentication.authenticators.browser.UsernameFormFactory;
 import org.keycloak.authentication.authenticators.browser.WebAuthnAuthenticatorFactory;
+import org.keycloak.authentication.authenticators.browser.WebAuthnPasswordlessAuthenticatorFactory;
+import org.keycloak.authentication.requiredactions.WebAuthnPasswordlessRegisterFactory;
 import org.keycloak.authentication.requiredactions.WebAuthnRegisterFactory;
 import org.keycloak.events.Details;
+import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RequiredActionProviderRepresentation;
+import org.keycloak.representations.idm.UserSessionRepresentation;
 import org.keycloak.testsuite.actions.AbstractAppInitiatedActionTest;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
+import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.pages.LoginUsernameOnlyPage;
 import org.keycloak.testsuite.pages.PasswordPage;
+import org.keycloak.testsuite.updaters.RealmAttributeUpdater;
 import org.keycloak.testsuite.util.FlowUtil;
+import org.keycloak.testsuite.util.OAuthClient;
+import org.keycloak.testsuite.util.SecondBrowser;
 import org.keycloak.testsuite.webauthn.authenticators.DefaultVirtualAuthOptions;
 import org.keycloak.testsuite.webauthn.authenticators.UseVirtualAuthenticators;
 import org.keycloak.testsuite.webauthn.authenticators.VirtualAuthenticatorManager;
 import org.keycloak.testsuite.webauthn.pages.WebAuthnRegisterPage;
+import org.openqa.selenium.WebDriver;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
-import static org.keycloak.common.Profile.Feature.WEB_AUTHN;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.junit.Assert.assertEquals;
 import static org.keycloak.models.AuthenticationExecutionModel.Requirement.ALTERNATIVE;
 import static org.keycloak.models.AuthenticationExecutionModel.Requirement.REQUIRED;
-import static org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer.REMOTE;
+import static org.keycloak.testsuite.util.BrowserDriverUtil.isDriverFirefox;
 import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
 
 /**
  * @author <a href="mailto:mabartos@redhat.com">Martin Bartos</a>
  */
-@EnableFeature(value = WEB_AUTHN, skipRestart = true, onlyForProduct = true)
-@AuthServerContainerExclude(REMOTE)
 public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTest implements UseVirtualAuthenticators {
 
     private VirtualAuthenticatorManager virtualManager;
+
+    protected final String WEB_AUTHN_REGISTER_PROVIDER = isPasswordless() ? WebAuthnPasswordlessRegisterFactory.PROVIDER_ID : WebAuthnRegisterFactory.PROVIDER_ID;
+    protected final String DEFAULT_USERNAME = "test-user@localhost";
+    protected final String DEFAULT_PASSWORD = "password";
 
     @Page
     LoginUsernameOnlyPage usernamePage;
@@ -65,20 +83,29 @@ public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTe
     @Page
     WebAuthnRegisterPage webAuthnRegisterPage;
 
+    @Drone
+    @SecondBrowser
+    private WebDriver driver2;
+
     @Before
     @Override
     public void setUpVirtualAuthenticator() {
-        virtualManager = AbstractWebAuthnVirtualTest.createDefaultVirtualManager(driver, DefaultVirtualAuthOptions.DEFAULT.getOptions());
+        if (!isDriverFirefox(driver)) {
+            virtualManager = AbstractWebAuthnVirtualTest.createDefaultVirtualManager(driver, DefaultVirtualAuthOptions.DEFAULT.getOptions());
+        }
     }
 
     @After
     @Override
     public void removeVirtualAuthenticator() {
-        virtualManager.removeAuthenticator();
+        if (!isDriverFirefox(driver)) {
+            virtualManager.removeAuthenticator();
+        }
     }
 
-    public AppInitiatedActionWebAuthnTest() {
-        super(WebAuthnRegisterFactory.PROVIDER_ID);
+    @Override
+    public String getAiaAction() {
+        return WEB_AUTHN_REGISTER_PROVIDER;
     }
 
     @Override
@@ -86,11 +113,15 @@ public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTe
         return true;
     }
 
+    protected boolean isPasswordless() {
+        return false;
+    }
+
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
         RequiredActionProviderRepresentation action = new RequiredActionProviderRepresentation();
-        action.setAlias(WebAuthnRegisterFactory.PROVIDER_ID);
-        action.setProviderId(WebAuthnRegisterFactory.PROVIDER_ID);
+        action.setAlias(WEB_AUTHN_REGISTER_PROVIDER);
+        action.setProviderId(WEB_AUTHN_REGISTER_PROVIDER);
         action.setEnabled(true);
         action.setDefaultAction(true);
         action.setPriority(10);
@@ -103,8 +134,10 @@ public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTe
     @Before
     public void setUpWebAuthnFlow() {
         final String newFlowAlias = "browserWebAuthnAIA";
-        testingClient.server("test").run(session -> FlowUtil.inCurrentRealm(session).copyBrowserFlow(newFlowAlias));
-        testingClient.server("test").run(session -> {
+        final String webAuthnAuthProvider = isPasswordless() ? WebAuthnPasswordlessAuthenticatorFactory.PROVIDER_ID : WebAuthnAuthenticatorFactory.PROVIDER_ID;
+
+        testingClient.server(TEST_REALM_NAME).run(session -> FlowUtil.inCurrentRealm(session).copyBrowserFlow(newFlowAlias));
+        testingClient.server(TEST_REALM_NAME).run(session -> {
             FlowUtil.inCurrentRealm(session)
                     .selectFlow(newFlowAlias)
                     .inForms(forms -> forms
@@ -112,7 +145,7 @@ public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTe
                             .addAuthenticatorExecution(REQUIRED, UsernameFormFactory.PROVIDER_ID)
                             .addSubFlowExecution(REQUIRED, subFlow -> subFlow
                                     .addAuthenticatorExecution(ALTERNATIVE, PasswordFormFactory.PROVIDER_ID)
-                                    .addAuthenticatorExecution(ALTERNATIVE, WebAuthnAuthenticatorFactory.PROVIDER_ID)))
+                                    .addAuthenticatorExecution(ALTERNATIVE, webAuthnAuthProvider)))
                     .defineAsBrowserFlow();
         });
     }
@@ -128,34 +161,79 @@ public class AppInitiatedActionWebAuthnTest extends AbstractAppInitiatedActionTe
 
         waitForPageToLoad();
 
-        assertKcActionStatus("cancelled");
+        assertKcActionStatus(CANCELLED);
     }
 
     @Test
-    public void proceedSetupWebAuthn() {
-        loginUser();
+    public void proceedSetupWebAuthnLogoutOtherSessionsChecked() throws IOException {
+        testWebAuthnLogoutOtherSessions(true);
+    }
+
+    @Test
+    public void proceedSetupWebAuthnLogoutOtherSessionsNotChecked() throws IOException {
+        testWebAuthnLogoutOtherSessions(false);
+    }
+
+    private void testWebAuthnLogoutOtherSessions(boolean logoutOtherSessions) throws IOException {
+        UserResource testUser = testRealm().users().get(findUser(DEFAULT_USERNAME).getId());
+
+        // perform a login using normal user/password form to have an old session
+        EventRepresentation event1;
+        try (RealmAttributeUpdater rau = new RealmAttributeUpdater(testRealm())
+                .setBrowserFlow("browser")
+                .update()) {
+            OAuthClient oauth2 = new OAuthClient();
+            oauth2.init(driver2);
+            oauth2.doLogin(DEFAULT_USERNAME, DEFAULT_PASSWORD);
+            event1 = events.expectLogin().assertEvent();
+            assertEquals(1, testUser.getUserSessions().size());
+        }
+
+        EventRepresentation event2 = loginUser();
+        assertEquals(2, testUser.getUserSessions().size());
 
         doAIA();
 
+        final Supplier<Integer> getCredentialCount = () -> Optional.ofNullable(ApiUtil.findUserByUsernameId(testRealm(), DEFAULT_USERNAME))
+                .map(UserResource::credentials)
+                .map(List::size)
+                .orElse(0);
+
+        final int credentialsCount = getCredentialCount.get();
+
         webAuthnRegisterPage.assertCurrent();
+        if (!logoutOtherSessions) {
+            webAuthnRegisterPage.uncheckLogoutSessions();
+        }
+        assertThat(webAuthnRegisterPage.isLogoutSessionsChecked(), is(logoutOtherSessions));
         webAuthnRegisterPage.clickRegister();
         webAuthnRegisterPage.registerWebAuthnCredential("authenticator1");
 
-        waitForPageToLoad();
+        assertKcActionStatus(SUCCESS);
 
-        assertKcActionStatus("success");
+        assertThat(getCredentialCount.get(), is(credentialsCount + 1));
+
+        List<UserSessionRepresentation> sessions = testUser.getUserSessions();
+        if (logoutOtherSessions) {
+            assertThat(sessions.size(), is(1));
+            assertThat(sessions.iterator().next().getId(), is(event2.getSessionId()));
+        } else {
+            assertThat(sessions.size(), is(2));
+            assertThat(sessions.stream().map(UserSessionRepresentation::getId).collect(Collectors.toList()),
+                    containsInAnyOrder(event1.getSessionId(), event2.getSessionId()));
+        }
     }
 
-    private void loginUser() {
+    private EventRepresentation loginUser() {
         usernamePage.open();
         usernamePage.assertCurrent();
-        usernamePage.login("test-user@localhost");
+        usernamePage.login(DEFAULT_USERNAME);
 
         passwordPage.assertCurrent();
-        passwordPage.login("password");
+        passwordPage.login(DEFAULT_PASSWORD);
 
-        events.expectLogin()
-                .detail(Details.USERNAME, "test-user@localhost")
+        return events.expectLogin()
+                .detail(Details.USERNAME, DEFAULT_USERNAME)
                 .assertEvent();
     }
 }

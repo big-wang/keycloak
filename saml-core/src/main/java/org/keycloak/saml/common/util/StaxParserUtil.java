@@ -52,6 +52,7 @@ import javax.xml.validation.Schema;
 import javax.xml.validation.SchemaFactory;
 import javax.xml.validation.Validator;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -370,7 +371,7 @@ public class StaxParserUtil {
     public static Boolean getBooleanAttributeValue(StartElement startElement, HasQName attrName) {
         Attribute attr = startElement.getAttributeByName(attrName.getQName());
         String value = getAttributeValue(attr);
-        return value == null ? null : Boolean.valueOf(value);
+        return toBoolean(value);
     }
 
     /**
@@ -384,7 +385,11 @@ public class StaxParserUtil {
     public static Boolean getBooleanAttributeValueRP(StartElement startElement, HasQName attrName) {
         Attribute attr = startElement.getAttributeByName(attrName.getQName());
         String value = getAttributeValueRP(attr);
-        return value == null ? null : Boolean.valueOf(value);
+        return toBoolean(value);
+    }
+
+    private static Boolean toBoolean(String value) {
+    	return value==null ? null : Boolean.valueOf(value) || "1".equals(value);
     }
 
     /**
@@ -523,7 +528,7 @@ public class StaxParserUtil {
      *
      * @param xmlEventReader
      *
-     * @return A <b>trimmed</b> string value with all property references replaced if any. 
+     * @return A <b>trimmed</b> string value with all property references replaced if any.
      * If there are no valid references the input string will be returned
      *
      * @throws ParsingException
@@ -553,6 +558,16 @@ public class StaxParserUtil {
             throw new RuntimeException(ex);
         }
         return xmlEventReader;
+    }
+
+    public static XMLEventReader getXMLEventReader(String xml) {
+        XMLInputFactory xmlInputFactory;
+        xmlInputFactory = XML_INPUT_FACTORY.get();
+        try {
+            return xmlInputFactory.createXMLEventReader(new StringReader(xml));
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
     }
 
     private static AtomicBoolean XML_EVENT_READER_ON_SOURCE_SUPPORTED = new AtomicBoolean(true);

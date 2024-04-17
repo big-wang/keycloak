@@ -27,6 +27,7 @@ import org.keycloak.cluster.ClusterProvider;
 import org.keycloak.connections.infinispan.InfinispanConnectionProvider;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.models.RealmModel;
 import org.keycloak.models.cache.authorization.CachedStoreFactoryProvider;
 import org.keycloak.models.cache.authorization.CachedStoreProviderFactory;
 import org.keycloak.models.cache.infinispan.entities.Revisioned;

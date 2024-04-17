@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,7 +39,7 @@ public class ScopeAdapter implements Scope, CachedModel<Scope> {
     public Scope getDelegateForUpdate() {
         if (updated == null) {
             cacheSession.registerScopeInvalidation(cached.getId(), cached.getName(), cached.getResourceServerId());
-            updated = cacheSession.getScopeStoreDelegate().findById(cached.getId(), cached.getResourceServerId());
+            updated = cacheSession.getScopeStoreDelegate().findById(getResourceServer(), cached.getId());
             if (updated == null) throw new IllegalStateException("Not found in database");
         }
         return updated;
@@ -66,7 +66,7 @@ public class ScopeAdapter implements Scope, CachedModel<Scope> {
     protected boolean isUpdated() {
         if (updated != null) return true;
         if (!invalidated) return false;
-        updated = cacheSession.getScopeStoreDelegate().findById(cached.getId(), cached.getResourceServerId());
+        updated = cacheSession.getScopeStoreDelegate().findById(getResourceServer(), cached.getId());
         if (updated == null) throw new IllegalStateException("Not found in database");
         return true;
     }

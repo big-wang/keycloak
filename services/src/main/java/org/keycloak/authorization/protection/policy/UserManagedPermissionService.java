@@ -1,13 +1,12 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2016 Red Hat, Inc., and individual contributors
- * as indicated by the @author tags.
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,20 +20,19 @@ import java.io.IOException;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
 
-import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.jboss.resteasy.reactive.NoCache;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.admin.PermissionService;
@@ -45,7 +43,6 @@ import org.keycloak.authorization.model.Policy;
 import org.keycloak.authorization.model.Resource;
 import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.authorization.store.ResourceStore;
-import org.keycloak.common.Profile;
 import org.keycloak.representations.idm.authorization.UmaPermissionRepresentation;
 import org.keycloak.services.ErrorResponseException;
 import org.keycloak.services.resources.admin.AdminEventBuilder;
@@ -66,7 +63,6 @@ public class UserManagedPermissionService {
         this.resourceServer = resourceServer;
         this.authorization = authorization;
         delegate = new PermissionService(resourceServer, authorization, null, eventBuilder);
-        ResteasyProviderFactory.getInstance().injectProperties(delegate);
     }
 
     @POST
@@ -132,7 +128,7 @@ public class UserManagedPermissionService {
     }
 
     private Policy getPolicy(@PathParam("policyId") String policyId) {
-        Policy existing = authorization.getStoreFactory().getPolicyStore().findById(policyId, resourceServer.getId());
+        Policy existing = authorization.getStoreFactory().getPolicyStore().findById(resourceServer, policyId);
 
         if (existing == null) {
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Policy with [" + policyId + "] does not exist", Status.NOT_FOUND);
@@ -143,7 +139,7 @@ public class UserManagedPermissionService {
 
     private void checkRequest(String resourceId, UmaPermissionRepresentation representation) {
         ResourceStore resourceStore = this.authorization.getStoreFactory().getResourceStore();
-        Resource resource = resourceStore.findById(resourceId, resourceServer.getId());
+        Resource resource = resourceStore.findById(resourceServer, resourceId);
 
         if (resource == null) {
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Resource [" + resourceId + "] cannot be found", Response.Status.BAD_REQUEST);
@@ -172,12 +168,6 @@ public class UserManagedPermissionService {
 
             if (!resourceScopes.containsAll(scopes)) {
                 throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Some of the scopes [" + scopes + "] are not valid for resource [" + resourceId + "]", Response.Status.BAD_REQUEST);
-            }
-
-            if (representation.getCondition() != null) {
-                if (!Profile.isFeatureEnabled(Profile.Feature.UPLOAD_SCRIPTS)) {
-                    throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Script upload not supported", Status.BAD_REQUEST);
-                }
             }
         }
     }

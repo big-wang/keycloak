@@ -20,6 +20,7 @@ package org.keycloak.models;
 import org.keycloak.common.util.SecretGenerator;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialModel;
+import org.keycloak.models.credential.RecoveryAuthnCodesCredentialModel;
 import org.keycloak.models.credential.OTPCredentialModel;
 import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.models.credential.PasswordUserCredentialModel;
@@ -126,6 +127,14 @@ public class UserCredentialModel implements CredentialInput {
         return new UserCredentialModel("", SECRET, SecretGenerator.getInstance().randomString());
     }
 
+    public static UserCredentialModel buildFromBackupAuthnCode(String backupAuthnCodeInput) {
+        return buildFromBackupAuthnCode("", backupAuthnCodeInput);
+    }
+
+    public static UserCredentialModel buildFromBackupAuthnCode(String credentialId, String backupAuthnCodeInput) {
+        return new UserCredentialModel(credentialId, RecoveryAuthnCodesCredentialModel.TYPE, backupAuthnCodeInput);
+    }
+
     @Override
     public String getCredentialId() {
         return credentialId;
@@ -184,7 +193,7 @@ public class UserCredentialModel implements CredentialInput {
         this.algorithm = algorithm;
     }
 
-    public void setNote(String key, String value) {
+    public void setNote(String key, Object value) {
         this.notes.put(key, value);
     }
 

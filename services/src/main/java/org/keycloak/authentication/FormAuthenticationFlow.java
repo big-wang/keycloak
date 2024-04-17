@@ -17,7 +17,7 @@
 
 package org.keycloak.authentication;
 
-import org.jboss.resteasy.spi.HttpRequest;
+import org.keycloak.http.HttpRequest;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.forms.login.LoginFormsProvider;
@@ -32,9 +32,9 @@ import org.keycloak.models.utils.FormMessage;
 import org.keycloak.services.resources.LoginActionsService;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriInfo;
 import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
@@ -271,6 +271,7 @@ public class FormAuthenticationFlow implements AuthenticationFlow {
                 .queryParam(Constants.EXECUTION, executionId)
                 .queryParam(Constants.CLIENT_ID, client.getClientId())
                 .queryParam(Constants.TAB_ID, processor.getAuthenticationSession().getTabId())
+                .queryParam(Constants.CLIENT_DATA, AuthenticationProcessor.getClientData(processor.getSession(), processor.getAuthenticationSession()))
                 .build(processor.getRealm().getName());
     }
 

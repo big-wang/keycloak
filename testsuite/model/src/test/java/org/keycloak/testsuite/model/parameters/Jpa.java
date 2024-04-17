@@ -17,6 +17,8 @@
 package org.keycloak.testsuite.model.parameters;
 
 import org.keycloak.authorization.jpa.store.JPAAuthorizationStoreFactory;
+import org.keycloak.broker.provider.IdentityProviderFactory;
+import org.keycloak.broker.provider.IdentityProviderSpi;
 import org.keycloak.connections.jpa.DefaultJpaConnectionProviderFactory;
 import org.keycloak.connections.jpa.JpaConnectionSpi;
 import org.keycloak.connections.jpa.updater.JpaUpdaterProviderFactory;
@@ -25,6 +27,7 @@ import org.keycloak.connections.jpa.updater.liquibase.conn.LiquibaseConnectionPr
 import org.keycloak.connections.jpa.updater.liquibase.conn.LiquibaseConnectionSpi;
 import org.keycloak.connections.jpa.updater.liquibase.lock.LiquibaseDBLockProviderFactory;
 import org.keycloak.events.jpa.JpaEventStoreProviderFactory;
+import org.keycloak.models.dblock.DBLockSpi;
 import org.keycloak.models.jpa.session.JpaUserSessionPersisterProviderFactory;
 import org.keycloak.models.session.UserSessionPersisterSpi;
 import org.keycloak.migration.MigrationProviderFactory;
@@ -38,6 +41,8 @@ import org.keycloak.models.jpa.JpaRoleProviderFactory;
 import org.keycloak.models.jpa.JpaUserProviderFactory;
 import org.keycloak.provider.ProviderFactory;
 import org.keycloak.provider.Spi;
+import org.keycloak.storage.DatastoreSpi;
+import org.keycloak.storage.datastore.DefaultDatastoreProviderFactory;
 import org.keycloak.testsuite.model.Config;
 import com.google.common.collect.ImmutableSet;
 import java.util.Set;
@@ -57,14 +62,23 @@ public class Jpa extends KeycloakModelParameters {
       .add(LiquibaseConnectionSpi.class)
       .add(UserSessionPersisterSpi.class)
 
+      .add(DatastoreSpi.class)
+
       //required for migrateModel
       .add(MigrationSpi.class)
       .add(LoginProtocolSpi.class)
+
+      .add(DBLockSpi.class)
+
+      //required for FederatedIdentityModel
+      .add(IdentityProviderSpi.class)
 
       .build();
 
     static final Set<Class<? extends ProviderFactory>> ALLOWED_FACTORIES = ImmutableSet.<Class<? extends ProviderFactory>>builder()
       // jpa-specific
+      .add(DefaultDatastoreProviderFactory.class)
+
       .add(DefaultJpaConnectionProviderFactory.class)
       .add(JPAAuthorizationStoreFactory.class)
       .add(JpaClientProviderFactory.class)
@@ -82,6 +96,9 @@ public class Jpa extends KeycloakModelParameters {
       //required for migrateModel
       .add(MigrationProviderFactory.class)
       .add(LoginProtocolFactory.class)
+
+      //required for FederatedIdentityModel
+      .add(IdentityProviderFactory.class)
 
       .build();
 

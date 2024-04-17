@@ -17,7 +17,7 @@
  */
 package org.keycloak.protocol.oidc.grants.ciba.endpoints.request;
 
-import javax.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.MultivaluedMap;
 
 import java.util.Set;
 
@@ -46,7 +46,7 @@ class BackchannelAuthenticationEndpointRequestBodyParser extends BackchannelAuth
     protected Integer getIntParameter(String paramName) {
         checkDuplicated(requestParams, paramName);
         String paramVal = requestParams.getFirst(paramName);
-        return paramVal==null ? null : Integer.parseInt(paramVal);
+        return paramVal==null ? null : Integer.valueOf(paramVal);
     }
 
     public String getInvalidRequestMessage() {

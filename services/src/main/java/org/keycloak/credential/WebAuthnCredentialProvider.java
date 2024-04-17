@@ -16,13 +16,24 @@
 
 package org.keycloak.credential;
 
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
-
 import com.webauthn4j.WebAuthnAuthenticationManager;
+import com.webauthn4j.authenticator.Authenticator;
+import com.webauthn4j.authenticator.AuthenticatorImpl;
 import com.webauthn4j.converter.util.ObjectConverter;
+import com.webauthn4j.data.AuthenticationData;
+import com.webauthn4j.data.AuthenticationParameters;
+import com.webauthn4j.data.AuthenticatorTransport;
+import com.webauthn4j.data.attestation.authenticator.AAGUID;
+import com.webauthn4j.data.attestation.authenticator.AttestedCredentialData;
+import com.webauthn4j.data.attestation.authenticator.COSEKey;
+import com.webauthn4j.data.client.CollectedClientData;
+import com.webauthn4j.data.client.Origin;
+import com.webauthn4j.server.ServerProperty;
+import com.webauthn4j.util.AssertUtil;
+import com.webauthn4j.util.exception.WebAuthnException;
+import com.webauthn4j.validator.OriginValidatorImpl;
+import com.webauthn4j.validator.exception.BadOriginException;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.requiredactions.WebAuthnRegisterFactory;
 import org.keycloak.common.util.Base64;
@@ -30,18 +41,15 @@ import org.keycloak.common.util.Time;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
-
-import com.webauthn4j.WebAuthnManager;
-import com.webauthn4j.authenticator.Authenticator;
-import com.webauthn4j.authenticator.AuthenticatorImpl;
-import com.webauthn4j.data.AuthenticationData;
-import com.webauthn4j.data.AuthenticationParameters;
-import com.webauthn4j.data.attestation.authenticator.AAGUID;
-import com.webauthn4j.data.attestation.authenticator.AttestedCredentialData;
-import com.webauthn4j.data.attestation.authenticator.COSEKey;
-import com.webauthn4j.util.exception.WebAuthnException;
+import org.keycloak.models.WebAuthnPolicy;
 import org.keycloak.models.credential.WebAuthnCredentialModel;
 import org.keycloak.models.credential.dto.WebAuthnCredentialData;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Credential provider for WebAuthn 2-factor credential of the user
@@ -63,23 +71,19 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
             attestationStatementConverter = new AttestationStatementConverter(objectConverter);
     }
 
-    private UserCredentialStore getCredentialStore() {
-        return session.userCredentialManager();
-    }
-
     @Override
     public CredentialModel createCredential(RealmModel realm, UserModel user, WebAuthnCredentialModel credentialModel) {
         if (credentialModel.getCreatedDate() == null) {
             credentialModel.setCreatedDate(Time.currentTimeMillis());
         }
 
-        return getCredentialStore().createCredential(realm, user, credentialModel);
+        return user.credentialManager().createStoredCredential(credentialModel);
     }
 
     @Override
     public boolean deleteCredential(RealmModel realm, UserModel user, String credentialId) {
         logger.debugv("Delete WebAuthn credential. username = {0}, credentialId = {1}", user.getUsername(), credentialId);
-        return getCredentialStore().removeStoredCredential(realm, user, credentialId);
+        return user.credentialManager().removeStoredCredentialById(credentialId);
     }
 
     @Override
@@ -105,7 +109,22 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
         long counter = webAuthnModel.getCount();
         String attestationStatementFormat = webAuthnModel.getAttestationStatementFormat();
 
-        WebAuthnCredentialModel model = WebAuthnCredentialModel.create(getType(), userLabel, aaguid, credentialId, null, credentialPublicKey, counter, attestationStatementFormat);
+        final Set<String> transports = webAuthnModel.getTransports()
+                .stream()
+                .map(AuthenticatorTransport::getValue)
+                .collect(Collectors.toSet());
+
+        WebAuthnCredentialModel model = WebAuthnCredentialModel.create(
+                getType(),
+                userLabel,
+                aaguid,
+                credentialId,
+                null,
+                credentialPublicKey,
+                counter,
+                attestationStatementFormat,
+                transports
+        );
 
         model.setId(webAuthnModel.getCredentialDBId());
 
@@ -157,7 +176,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
     @Override
     public boolean isConfiguredFor(RealmModel realm, UserModel user, String credentialType) {
         if (!supportsCredentialType(credentialType)) return false;
-        return session.userCredentialManager().getStoredCredentialsByTypeStream(realm, user, credentialType).count() > 0;
+        return user.credentialManager().getStoredCredentialsByTypeStream(credentialType).count() > 0;
     }
 
 
@@ -168,7 +187,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
         WebAuthnCredentialModelInput context = WebAuthnCredentialModelInput.class.cast(input);
         List<WebAuthnCredentialModelInput> auths = getWebAuthnCredentialModelList(realm, user);
 
-        WebAuthnAuthenticationManager webAuthnAuthenticationManager = new WebAuthnAuthenticationManager();
+        WebAuthnAuthenticationManager webAuthnAuthenticationManager = getWebAuthnAuthenticationManager();
         AuthenticationData authenticationData = null;
 
         try {
@@ -195,7 +214,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
 
                     logger.debugv("response.getAuthenticatorData().getFlags() = {0}", authenticationData.getAuthenticatorData().getFlags());
 
-                    CredentialModel credModel = getCredentialStore().getStoredCredentialById(realm, user, auth.getCredentialDBId());
+                    CredentialModel credModel = user.credentialManager().getStoredCredentialById(auth.getCredentialDBId());
                     WebAuthnCredentialModel webAuthnCredModel = getCredentialFromModel(credModel);
 
                     // update authenticator counter
@@ -204,7 +223,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
                     long count = auth.getCount();
                     if (count > 0) {
                         webAuthnCredModel.updateCounter(count + 1);
-                        getCredentialStore().updateCredential(realm, user, webAuthnCredModel);
+                        user.credentialManager().updateStoredCredential(webAuthnCredModel);
                     }
 
                     logger.debugf("Successfully validated WebAuthn credential for user %s", user.getUsername());
@@ -221,6 +240,31 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
         return false;
     }
 
+    protected WebAuthnAuthenticationManager getWebAuthnAuthenticationManager() {
+        WebAuthnPolicy policy = getWebAuthnPolicy();
+        Set<Origin> origins = policy.getExtraOrigins().stream()
+                .map(Origin::new)
+                .collect(Collectors.toSet());
+        WebAuthnAuthenticationManager webAuthnAuthenticationManager = new WebAuthnAuthenticationManager();
+        webAuthnAuthenticationManager.getAuthenticationDataValidator().setOriginValidator(new OriginValidatorImpl(){
+            @Override
+            protected void validate(@NonNull CollectedClientData collectedClientData,
+                                    @NonNull ServerProperty serverProperty) {
+                AssertUtil.notNull(collectedClientData, "collectedClientData must not be null");
+                AssertUtil.notNull(serverProperty, "serverProperty must not be null");
+                final Origin clientOrigin = collectedClientData.getOrigin();
+                if (serverProperty.getOrigins().contains(clientOrigin)) return;
+                // https://github.com/w3c/webauthn/issues/1297
+                if (origins.contains(clientOrigin)) return;
+                throw new BadOriginException("The collectedClientData '" + clientOrigin + "' origin doesn't match any of the preconfigured origins.");
+            }
+        });
+        return webAuthnAuthenticationManager;
+    }
+
+    protected WebAuthnPolicy getWebAuthnPolicy() {
+        return session.getContext().getRealm().getWebAuthnPolicy();
+    }
 
     @Override
     public String getType() {
@@ -229,7 +273,7 @@ public class WebAuthnCredentialProvider implements CredentialProvider<WebAuthnCr
 
 
     private List<WebAuthnCredentialModelInput> getWebAuthnCredentialModelList(RealmModel realm, UserModel user) {
-        return session.userCredentialManager().getStoredCredentialsByTypeStream(realm, user, getType())
+        return user.credentialManager().getStoredCredentialsByTypeStream(getType())
                 .map(this::getCredentialInputFromCredentialModel)
                 .collect(Collectors.toList());
     }

@@ -19,12 +19,11 @@ package org.keycloak.theme;
 
 import freemarker.template.TemplateMethodModelEx;
 import freemarker.template.TemplateModelException;
+import org.owasp.html.Encoding;
 
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import org.owasp.html.PolicyFactory;
 
 /**
  * Allows sanitizing of html that uses Freemarker ?no_esc.  This way, html
@@ -33,8 +32,6 @@ import org.owasp.html.PolicyFactory;
  */
 public class KeycloakSanitizerMethod implements TemplateMethodModelEx {
     
-    private static final PolicyFactory KEYCLOAK_POLICY = KeycloakSanitizerPolicy.POLICY_DEFINITION;
-
     private static final Pattern HREF_PATTERN = Pattern.compile("\\s+href=\"([^\"]*)\"");
     
     @Override
@@ -44,9 +41,34 @@ public class KeycloakSanitizerMethod implements TemplateMethodModelEx {
         }
         
         String html = list.get(0).toString();
-        String sanitized = KEYCLOAK_POLICY.sanitize(html);
+
+        html = decodeHtmlFull(html);
+
+        String sanitized = KeycloakSanitizerPolicy.POLICY_DEFINITION.sanitize(html);
         
         return fixURLs(sanitized);
+    }
+
+
+    // Fully decode HTML. Assume it can be encoded multiple times
+    private String decodeHtmlFull(String html) {
+        if (html == null) return null;
+
+        int MAX_DECODING_COUNT = 5; // Max count of attempts for decoding HTML (in case it was encoded multiple times)
+        String decodedHtml;
+
+        for (int i = 0; i < MAX_DECODING_COUNT; i++) {
+            decodedHtml = Encoding.decodeHtml(html);
+            if (decodedHtml.equals(html)) {
+                // HTML is decoded. We can return it
+                return html;
+            } else {
+                // Next attempt
+                html = decodedHtml;
+            }
+        }
+
+        return "";
     }
 
     private String fixURLs(String msg) {

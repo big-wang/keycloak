@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,8 @@ public class ResourceServerAdapter implements ResourceServer, CachedModel<Resour
     protected StoreFactoryCacheSession cacheSession;
     protected ResourceServer updated;
 
-    public ResourceServerAdapter(CachedResourceServer cached, StoreFactoryCacheSession cacheSession) {
+    public ResourceServerAdapter(CachedResourceServer cached,
+                                 StoreFactoryCacheSession cacheSession) {
         this.cached = cached;
         this.cacheSession = cacheSession;
     }
@@ -114,6 +115,11 @@ public class ResourceServerAdapter implements ResourceServer, CachedModel<Resour
     public void setDecisionStrategy(DecisionStrategy decisionStrategy) {
         getDelegateForUpdate();
         updated.setDecisionStrategy(decisionStrategy);
+    }
+
+    @Override
+    public String getClientId() {
+        return getId();
     }
 
     @Override

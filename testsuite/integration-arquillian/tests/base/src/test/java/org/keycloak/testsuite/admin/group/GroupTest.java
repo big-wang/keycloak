@@ -18,29 +18,33 @@
 package org.keycloak.testsuite.admin.group;
 
 import com.google.common.collect.Comparators;
+import org.hamcrest.Matchers;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.GroupResource;
 import org.keycloak.admin.client.resource.GroupsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.RoleMappingResource;
+import org.keycloak.admin.client.resource.UserProfileResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
-import org.keycloak.common.Profile;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
+import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
+import org.keycloak.representations.idm.ErrorRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.MappingsRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.representations.userprofile.config.UPConfig;
 import org.keycloak.testsuite.admin.ApiUtil;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.forms.VerifyProfileTest;
+import org.keycloak.testsuite.updaters.Creator;
 import org.keycloak.testsuite.util.AdminEventPaths;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.RoleBuilder;
@@ -49,8 +53,8 @@ import org.keycloak.testsuite.util.UserBuilder;
 import org.keycloak.testsuite.utils.tls.TLSUtils;
 import org.keycloak.util.JsonSerialization;
 
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
@@ -62,20 +66,30 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import javax.ws.rs.ClientErrorException;
-import javax.ws.rs.core.Response.Status;
+import java.util.stream.Collectors;
+
+import jakarta.ws.rs.ClientErrorException;
+import jakarta.ws.rs.core.Response.Status;
 import static org.hamcrest.Matchers.*;
 
-import static org.junit.Assert.*;
 import org.junit.Rule;
 import org.junit.rules.ExpectedException;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.models.AdminRoles;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.utils.KeycloakModelUtils;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import org.keycloak.models.GroupProvider;
 import static org.keycloak.testsuite.Assert.assertNames;
-import static org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer.REMOTE;
 import static org.keycloak.testsuite.util.ServerURLs.getAuthServerContextRoot;
 
 import org.keycloak.testsuite.arquillian.annotation.UncaughtServerErrorExpected;
@@ -135,13 +149,13 @@ public class GroupTest extends AbstractGroupTest {
         Response response = realm.clients().create(client);
         response.close();
         String clientUuid = ApiUtil.getCreatedId(response);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.clientResourcePath(clientUuid), client, ResourceType.CLIENT);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.clientResourcePath(clientUuid), client, ResourceType.CLIENT);
         client = realm.clients().findByClientId("foo").get(0);
 
         RoleRepresentation role = new RoleRepresentation();
         role.setName("foo-role");
         realm.clients().get(client.getId()).roles().create(role);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientUuid, "foo-role"), role, ResourceType.CLIENT_ROLE);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientUuid, "foo-role"), role, ResourceType.CLIENT_ROLE);
         role = realm.clients().get(client.getId()).roles().get("foo-role").toRepresentation();
 
         GroupRepresentation group = new GroupRepresentation();
@@ -151,34 +165,14 @@ public class GroupTest extends AbstractGroupTest {
         List<RoleRepresentation> list = new LinkedList<>();
         list.add(role);
         realm.groups().group(group.getId()).roles().clientLevel(client.getId()).add(list);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientUuid), list, ResourceType.CLIENT_ROLE_MAPPING);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientUuid), list, ResourceType.CLIENT_ROLE_MAPPING);
 
         realm.clients().get(client.getId()).remove();
-        assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.clientResourcePath(clientUuid), ResourceType.CLIENT);
-    }
-
-    private GroupRepresentation createGroup(RealmResource realm, GroupRepresentation group) {
-        try (Response response = realm.groups().add(group)) {
-            String groupId = ApiUtil.getCreatedId(response);
-            getCleanup().addGroupId(groupId);
-
-            assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupPath(groupId), group, ResourceType.GROUP);
-
-            // Set ID to the original rep
-            group.setId(groupId);
-            return group;
-        }
-    }
-
-    private RoleRepresentation createRealmRole(RealmResource realm, RoleRepresentation role) {
-        realm.roles().create(role);
-
-        RoleRepresentation created = realm.roles().get(role.getName()).toRepresentation();
-        getCleanup().addRoleId(created.getId());
-        return created;
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.clientResourcePath(clientUuid), ResourceType.CLIENT);
     }
 
     @Test
+    // KEYCLOAK-16888 Error messages for groups with same name in the same level
     public void doNotAllowSameGroupNameAtSameLevel() throws Exception {
         RealmResource realm = adminClient.realms().realm("test");
 
@@ -189,21 +183,33 @@ public class GroupTest extends AbstractGroupTest {
         GroupRepresentation anotherTopGroup = new GroupRepresentation();
         anotherTopGroup.setName("top");
         Response response = realm.groups().add(anotherTopGroup);
-        assertEquals(409, response.getStatus()); // conflict status 409 - same name not allowed
+        assertSameNameNotAllowed(response,"Top level group named 'top' already exists.");
+        response.close();
+
+        // allow moving the group to top level (nothing is done)
+        response = realm.groups().add(topGroup);
+        assertEquals(Response.Status.NO_CONTENT, response.getStatusInfo());
+        response.close();
 
         GroupRepresentation level2Group = new GroupRepresentation();
         level2Group.setName("level2");
         response = realm.groups().group(topGroup.getId()).subGroup(level2Group);
-        response.close();
         assertEquals(201, response.getStatus()); // created status
+        level2Group.setId(ApiUtil.getCreatedId(response));
+        response.close();
 
         GroupRepresentation anotherlevel2Group = new GroupRepresentation();
         anotherlevel2Group.setName("level2");
         response = realm.groups().group(topGroup.getId()).subGroup(anotherlevel2Group);
+        assertSameNameNotAllowed(response,"Sibling group named 'level2' already exists.");
         response.close();
-        assertEquals(409, response.getStatus()); // conflict status 409 - same name not allowed
+
+        // allow moving the group to the same parent (nothing is done)
+        response = realm.groups().group(topGroup.getId()).subGroup(level2Group);
+        assertEquals(Response.Status.NO_CONTENT, response.getStatusInfo());
+        response.close();
     }
-    
+
     @Test
     // KEYCLOAK-11412 Unintended Groups with same names
     public void doNotAllowSameGroupNameAtSameLevelWhenUpdatingName() throws Exception {
@@ -216,15 +222,15 @@ public class GroupTest extends AbstractGroupTest {
         GroupRepresentation anotherTopGroup = new GroupRepresentation();
         anotherTopGroup.setName("top2");
         anotherTopGroup = createGroup(realm, anotherTopGroup);
-        
+
         anotherTopGroup.setName("top1");
-        
+
         try {
             realm.groups().group(anotherTopGroup.getId()).update(anotherTopGroup);
             Assert.fail("Expected ClientErrorException");
         } catch (ClientErrorException e) {
             // conflict status 409 - same name not allowed
-            assertEquals("HTTP 409 Conflict", e.getMessage());
+            assertSameNameNotAllowed(e.getResponse(),"Sibling group named 'top1' already exists.");
         }
 
         GroupRepresentation level2Group = new GroupRepresentation();
@@ -236,21 +242,14 @@ public class GroupTest extends AbstractGroupTest {
         addSubGroup(realm, topGroup, anotherlevel2Group);
 
         anotherlevel2Group.setName("level2-1");
-        
+
         try {
             realm.groups().group(anotherlevel2Group.getId()).update(anotherlevel2Group);
             Assert.fail("Expected ClientErrorException");
         } catch (ClientErrorException e) {
             // conflict status 409 - same name not allowed
-            assertEquals("HTTP 409 Conflict", e.getMessage());
-        }  
-    }
-    
-    private void addSubGroup(RealmResource realm, GroupRepresentation parent, GroupRepresentation child) {
-        Response response = realm.groups().add(child);
-        child.setId(ApiUtil.getCreatedId(response));
-        response = realm.groups().group(parent.getId()).subGroup(child);
-        response.close();
+            assertSameNameNotAllowed(e.getResponse(),"Sibling group named 'level2-1' already exists.");
+        }
     }
 
     @Test
@@ -293,20 +292,20 @@ public class GroupTest extends AbstractGroupTest {
 
     @Test
     @UncaughtServerErrorExpected
-    @AuthServerContainerExclude(REMOTE)
     public void doNotAllowSameGroupNameAtTopLevelInDatabase() throws Exception {
-        final String id = KeycloakModelUtils.generateId();
-        testingClient.server().run(session -> {
-            RealmModel realm = session.realms().getRealm("test");
-            realm.createGroup(id, "test-group");
-        });
+        final String id = testingClient.server().fetch(session -> {
+            RealmModel realm = session.realms().getRealmByName("test");
+            GroupModel g = realm.createGroup("test-group");
+            return g.getId();
+        }, String.class);
         getCleanup().addGroupId(id);
         // unique key should work even in top groups
         expectedException.expect(RunOnServerException.class);
         expectedException.expectMessage(ModelDuplicateException.class.getName());
         testingClient.server().run(session -> {
-            RealmModel realm = session.realms().getRealm("test");
-            realm.createGroup("test-group");
+            RealmModel realm = session.realms().getRealmByName("test");
+            GroupModel g = realm.createGroup("test-group");
+            realm.removeGroup(g);
         });
     }
 
@@ -324,7 +323,7 @@ public class GroupTest extends AbstractGroupTest {
                 Assert.fail("Creating a group with empty name should fail");
             }
         } catch (Exception expected) {
-            Assert.assertNotNull(expected);
+            assertNotNull(expected);
         }
 
         group.setName(null);
@@ -333,7 +332,7 @@ public class GroupTest extends AbstractGroupTest {
                 Assert.fail("Creating a group with null name should fail");
             }
         } catch (Exception expected) {
-            Assert.assertNotNull(expected);
+            assertNotNull(expected);
         }
     }
 
@@ -356,7 +355,7 @@ public class GroupTest extends AbstractGroupTest {
             realm.groups().group(groupId).update(group);
             Assert.fail("Updating a group with empty name should fail");
         } catch(Exception expected) {
-            Assert.assertNotNull(expected);
+            assertNotNull(expected);
         }
 
         try {
@@ -364,7 +363,7 @@ public class GroupTest extends AbstractGroupTest {
             realm.groups().group(groupId).update(group);
             Assert.fail("Updating a group with null name should fail");
         } catch(Exception expected) {
-            Assert.assertNotNull(expected);
+            assertNotNull(expected);
         }
     }
 
@@ -385,13 +384,13 @@ public class GroupTest extends AbstractGroupTest {
         List<RoleRepresentation> roles = new LinkedList<>();
         roles.add(topRole);
         realm.groups().group(topGroup.getId()).roles().realmLevel().add(roles);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(topGroup.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(topGroup.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
 
         GroupRepresentation level2Group = new GroupRepresentation();
         level2Group.setName("level2");
         Response response = realm.groups().group(topGroup.getId()).subGroup(level2Group);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(topGroup.getId()), level2Group, ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(topGroup.getId()), level2Group, ResourceType.GROUP);
 
         URI location = response.getLocation();
         final String level2Id = ApiUtil.getCreatedId(response);
@@ -408,44 +407,44 @@ public class GroupTest extends AbstractGroupTest {
         });
 
         level2Group = realm.getGroupByPath("/top/level2");
-        Assert.assertNotNull(level2Group);
+        assertNotNull(level2Group);
         roles.clear();
         roles.add(level2Role);
         realm.groups().group(level2Group.getId()).roles().realmLevel().add(roles);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(level2Group.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(level2Group.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
 
         GroupRepresentation level3Group = new GroupRepresentation();
         level3Group.setName("level3");
         response = realm.groups().group(level2Group.getId()).subGroup(level3Group);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(level2Group.getId()), level3Group, ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(level2Group.getId()), level3Group, ResourceType.GROUP);
 
         level3Group = realm.getGroupByPath("/top/level2/level3");
-        Assert.assertNotNull(level3Group);
+        assertNotNull(level3Group);
         roles.clear();
         roles.add(level3Role);
         realm.groups().group(level3Group.getId()).roles().realmLevel().add(roles);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(level3Group.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(level3Group.getId()), roles, ResourceType.REALM_ROLE_MAPPING);
 
         topGroup = realm.getGroupByPath("/top");
         assertEquals(1, topGroup.getRealmRoles().size());
         assertTrue(topGroup.getRealmRoles().contains("topRole"));
-        assertEquals(1, topGroup.getSubGroups().size());
+        assertEquals(1, realm.groups().group(topGroup.getId()).getSubGroups(0, null, false).size());
 
-        level2Group = topGroup.getSubGroups().get(0);
+        level2Group = realm.getGroupByPath("/top/level2");
         assertEquals("level2", level2Group.getName());
         assertEquals(1, level2Group.getRealmRoles().size());
         assertTrue(level2Group.getRealmRoles().contains("level2Role"));
-        assertEquals(1, level2Group.getSubGroups().size());
+        assertEquals(1, realm.groups().group(level2Group.getId()).getSubGroups(0, null, false).size());
 
-        level3Group = level2Group.getSubGroups().get(0);
+        level3Group = realm.getGroupByPath("/top/level2/level3");
         assertEquals("level3", level3Group.getName());
         assertEquals(1, level3Group.getRealmRoles().size());
         assertTrue(level3Group.getRealmRoles().contains("level3Role"));
 
         UserRepresentation user = realm.users().search("direct-login", -1, -1).get(0);
         realm.users().get(user.getId()).joinGroup(level3Group.getId());
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userGroupPath(user.getId(), level3Group.getId()), ResourceType.GROUP_MEMBERSHIP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userGroupPath(user.getId(), level3Group.getId()), ResourceType.GROUP_MEMBERSHIP);
 
         List<GroupRepresentation> membership = realm.users().get(user.getId()).groups();
         assertEquals(1, membership.size());
@@ -457,7 +456,7 @@ public class GroupTest extends AbstractGroupTest {
         assertTrue(token.getRealmAccess().getRoles().contains("level3Role"));
 
         realm.addDefaultGroup(level3Group.getId());
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.defaultGroupPath(level3Group.getId()), ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.defaultGroupPath(level3Group.getId()), ResourceType.GROUP);
 
         List<GroupRepresentation> defaultGroups = realm.getDefaultGroups();
         assertEquals(1, defaultGroups.size());
@@ -469,20 +468,20 @@ public class GroupTest extends AbstractGroupTest {
         response = realm.users().create(newUser);
         String userId = ApiUtil.getCreatedId(response);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userResourcePath(userId), newUser, ResourceType.USER);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userResourcePath(userId), newUser, ResourceType.USER);
 
         membership = realm.users().get(userId).groups();
         assertEquals(1, membership.size());
         assertEquals("level3", membership.get(0).getName());
 
         realm.removeDefaultGroup(level3Group.getId());
-        assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.defaultGroupPath(level3Group.getId()), ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.defaultGroupPath(level3Group.getId()), ResourceType.GROUP);
 
         defaultGroups = realm.getDefaultGroups();
         assertEquals(0, defaultGroups.size());
 
         realm.groups().group(topGroup.getId()).remove();
-        assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupPath(topGroup.getId()), ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupPath(topGroup.getId()), ResourceType.GROUP);
 
         try {
             realm.getGroupByPath("/top/level2/level3");
@@ -502,7 +501,7 @@ public class GroupTest extends AbstractGroupTest {
         }
         catch (NotFoundException e) {}
 
-        Assert.assertNull(login("direct-login", "resource-owner", "secret", user.getId()).getRealmAccess());
+        assertNull(login("direct-login", "resource-owner", "secret", user.getId()).getRealmAccess());
     }
 
     @Test
@@ -518,7 +517,7 @@ public class GroupTest extends AbstractGroupTest {
         createGroup(realm, group);
         group = realm.getGroupByPath("/" + groupName);
 
-        Assert.assertNotNull(group);
+        assertNotNull(group);
         assertThat(group.getName(), is(groupName));
         assertThat(group.getAttributes().keySet(), containsInAnyOrder("attr1", "attr2"));
         assertThat(group.getAttributes(), hasEntry(is("attr1"), contains("attrval1")));
@@ -532,7 +531,7 @@ public class GroupTest extends AbstractGroupTest {
         group.getAttributes().put("attr3", Collections.singletonList("attrval2"));
 
         realm.groups().group(group.getId()).update(group);
-        assertAdminEvents.assertEvent("test", OperationType.UPDATE, AdminEventPaths.groupPath(group.getId()), group, ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.UPDATE, AdminEventPaths.groupPath(group.getId()), group, ResourceType.GROUP);
 
         group = realm.getGroupByPath("/" + groupNewName);
 
@@ -559,14 +558,15 @@ public class GroupTest extends AbstractGroupTest {
 
         // Move "mygroup2" as child of "mygroup1" . Assert it was moved
         Response response = realm.groups().group(group1.getId()).subGroup(group2);
-        Assert.assertEquals(204, response.getStatus());
+        assertEquals(204, response.getStatus());
         response.close();
 
         // Assert "mygroup2" was moved
-        group1 = realm.groups().group(group1.getId()).toRepresentation();
-        group2 = realm.groups().group(group2.getId()).toRepresentation();
-        assertNames(group1.getSubGroups(), "mygroup2");
-        Assert.assertEquals("/mygroup1/mygroup2", group2.getPath());
+        List<GroupRepresentation> group1Children = realm.groups().group(group1.getId()).getSubGroups(0, 10, false);
+        List<GroupRepresentation> group2Children = realm.groups().group(group2.getId()).getSubGroups(0, 10, false);
+
+        assertNames(group1Children, "mygroup2");
+        assertEquals("/mygroup1/mygroup2", realm.groups().group(group2.getId()).toRepresentation().getPath());
 
         assertAdminEvents.clear();
 
@@ -578,19 +578,19 @@ public class GroupTest extends AbstractGroupTest {
         // Try to move top level "mygroup2" as child of "mygroup1". It should fail as there is already a child group
         // of "mygroup1" with name "mygroup2"
         response = realm.groups().group(group1.getId()).subGroup(group3);
-        Assert.assertEquals(409, response.getStatus());
+        assertEquals(409, response.getStatus());
         realm.groups().group(group3.getId()).remove();
 
         // Move "mygroup2" back under parent
         response = realm.groups().add(group2);
-        Assert.assertEquals(204, response.getStatus());
+        assertEquals(204, response.getStatus());
         response.close();
 
         // Assert "mygroup2" was moved
-        group1 = realm.groups().group(group1.getId()).toRepresentation();
-        group2 = realm.groups().group(group2.getId()).toRepresentation();
-        assertTrue(group1.getSubGroups().isEmpty());
-        Assert.assertEquals("/mygroup2", group2.getPath());
+        group1Children = realm.groups().group(group1.getId()).getSubGroups(0, 10, false);
+        group2Children = realm.groups().group(group2.getId()).getSubGroups(0, 10, false);
+        assertEquals(0, group1Children.size());
+        assertEquals("/mygroup2", realm.groups().group(group2.getId()).toRepresentation().getPath());
     }
 
     @Test
@@ -604,33 +604,36 @@ public class GroupTest extends AbstractGroupTest {
         Response response = realm.users().create(UserBuilder.create().username("user-a").build());
         String userAId = ApiUtil.getCreatedId(response);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userResourcePath(userAId), ResourceType.USER);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userResourcePath(userAId), ResourceType.USER);
 
         response = realm.users().create(UserBuilder.create().username("user-b").build());
         String userBId = ApiUtil.getCreatedId(response);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userResourcePath(userBId), ResourceType.USER);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userResourcePath(userBId), ResourceType.USER);
 
         realm.users().get(userAId).joinGroup(groupId);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userGroupPath(userAId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userGroupPath(userAId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
 
         List<UserRepresentation> members = realm.groups().group(groupId).members(0, 10);
         assertNames(members, "user-a");
 
         realm.users().get(userBId).joinGroup(groupId);
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.userGroupPath(userBId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.userGroupPath(userBId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
 
         members = realm.groups().group(groupId).members(0, 10);
         assertNames(members, "user-a", "user-b");
 
         realm.users().get(userAId).leaveGroup(groupId);
-        assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.userGroupPath(userAId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.userGroupPath(userAId, groupId), group, ResourceType.GROUP_MEMBERSHIP);
 
         members = realm.groups().group(groupId).members(0, 10);
         assertNames(members, "user-b");
+
+        List<GroupRepresentation> groups = realm.users().get(userAId).groups(null, null);
+        assertNames(groups, new String[] {});
     }
 
-    
+
     @Test
     //KEYCLOAK-6300
     public void groupMembershipUsersOrder() {
@@ -644,20 +647,20 @@ public class GroupTest extends AbstractGroupTest {
         for (int i = 0; i < 9; i++) {
             UserRepresentation user = UserBuilder.create().username("user" + i).build();
             usernames.add(user.getUsername());
-            
+
             try (Response create = realm.users().create(user)) {
                 assertEquals(Status.CREATED, create.getStatusInfo());
-                
+
                 String userAId = ApiUtil.getCreatedId(create);
                 realm.users().get(userAId).joinGroup(groupId);
             }
         }
-        
+
         List<String> memberUsernames = new ArrayList<>();
         for (UserRepresentation member : realm.groups().group(groupId).members(0, 10)) {
             memberUsernames.add(member.getUsername());
         }
-        assertArrayEquals("Expected: " + usernames + ", was: " + memberUsernames, 
+        assertArrayEquals("Expected: " + usernames + ", was: " + memberUsernames,
                 usernames.toArray(), memberUsernames.toArray());
     }
 
@@ -713,15 +716,15 @@ public class GroupTest extends AbstractGroupTest {
             l.add(realm.roles().get("realm-role").toRepresentation());
             l.add(realm.roles().get("realm-composite").toRepresentation());
             roles.realmLevel().add(l);
-            assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(group.getId()), l, ResourceType.REALM_ROLE_MAPPING);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesRealmRolesPath(group.getId()), l, ResourceType.REALM_ROLE_MAPPING);
 
             // Add client roles
             RoleRepresentation clientRole = realm.clients().get(clientId).roles().get("client-role").toRepresentation();
             RoleRepresentation clientComposite = realm.clients().get(clientId).roles().get("client-composite").toRepresentation();
             roles.clientLevel(clientId).add(Collections.singletonList(clientRole));
             roles.clientLevel(clientId).add(Collections.singletonList(clientComposite));
-            assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientRole), ResourceType.CLIENT_ROLE_MAPPING);
-            assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientComposite), ResourceType.CLIENT_ROLE_MAPPING);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientRole), ResourceType.CLIENT_ROLE_MAPPING);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientComposite), ResourceType.CLIENT_ROLE_MAPPING);
 
             // List realm roles
             assertNames(roles.realmLevel().listAll(), "realm-role", "realm-composite");
@@ -742,13 +745,13 @@ public class GroupTest extends AbstractGroupTest {
             // Remove realm role
             RoleRepresentation realmRoleRep = realm.roles().get("realm-role").toRepresentation();
             roles.realmLevel().remove(Collections.singletonList(realmRoleRep));
-            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupRolesRealmRolesPath(group.getId()), Collections.singletonList(realmRoleRep), ResourceType.REALM_ROLE_MAPPING);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupRolesRealmRolesPath(group.getId()), Collections.singletonList(realmRoleRep), ResourceType.REALM_ROLE_MAPPING);
             assertNames(roles.realmLevel().listAll(), "realm-composite");
 
             // Remove client role
             RoleRepresentation clientRoleRep = realm.clients().get(clientId).roles().get("client-role").toRepresentation();
             roles.clientLevel(clientId).remove(Collections.singletonList(clientRoleRep));
-            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientRoleRep), ResourceType.CLIENT_ROLE_MAPPING);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupRolesClientRolesPath(group.getId(), clientId), Collections.singletonList(clientRoleRep), ResourceType.CLIENT_ROLE_MAPPING);
             assertNames(roles.clientLevel(clientId).listAll(), "client-composite");
         }
     }
@@ -894,7 +897,7 @@ public class GroupTest extends AbstractGroupTest {
         GroupRepresentation group = GroupBuilder.create().name(groupName).build();
         try (Response response = realm.groups().add(group)) {
             String groupId = ApiUtil.getCreatedId(response);
-        
+
             RoleMappingResource mappings = realm.groups().group(groupId).roles();
             mappings.realmLevel().add(Collections.singletonList(adminRole));
 
@@ -1025,43 +1028,100 @@ public class GroupTest extends AbstractGroupTest {
             assertEquals(110, group.members(-1, -2).size());
         }
     }
-    
+
     @Test
     public void getGroupsWithFullRepresentation() {
         RealmResource realm = adminClient.realms().realm("test");
         GroupsResource groupsResource = adminClient.realms().realm("test").groups();
-        
+
         GroupRepresentation group = new GroupRepresentation();
         group.setName("groupWithAttribute");
-        
+
         Map<String, List<String>> attributes = new HashMap<String, List<String>>();
         attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
 		group.setAttributes(attributes);
         group = createGroup(realm, group);
-        
+
         List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20, false);
-        
+
         assertFalse(groups.isEmpty());
         assertTrue(groups.get(0).getAttributes().containsKey("attribute1"));
     }
-    
+
+    @Test
+    public void searchGroupsByNameContaining() {
+        RealmResource realm = adminClient.realms().realm("test");
+        try(Creator<GroupResource> g = Creator.create(realm, GroupBuilder.create().name("group-name-1").build());
+            Creator<GroupResource> g1 = Creator.create(realm, GroupBuilder.create().name("group-name-2").build())) {
+            GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+            List<GroupRepresentation> groups = groupsResource.groups("group-name", false, 0, 20, false);
+            assertThat(groups, hasSize(2));
+        }
+    }
+
+    @Test
+    public void searchGroupsByNameExactSuccess() {
+        RealmResource realm = adminClient.realms().realm("test");
+        try(Creator<GroupResource> g = Creator.create(realm, GroupBuilder.create().name("group-name-1").build());
+            Creator<GroupResource> g1 = Creator.create(realm, GroupBuilder.create().name("group-name-2").build())) {
+            GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+            List<GroupRepresentation> groups = groupsResource.groups("group-name-1", true, 0, 20, false);
+            assertThat(groups, hasSize(1));
+        }
+    }
+
+    @Test
+    public void searchGroupsByNameExactFailure() {
+        RealmResource realm = adminClient.realms().realm("test");
+        try(Creator<GroupResource> g = Creator.create(realm, GroupBuilder.create().name("group-name-1").build());
+            Creator<GroupResource> g1 = Creator.create(realm, GroupBuilder.create().name("group-name-2").build())) {
+            GroupsResource groupsResource = adminClient.realms().realm("test").groups();
+            List<GroupRepresentation> groups = groupsResource.groups("group-name", true, 0, 20, false);
+            assertThat(groups, empty());
+        }
+    }
+
     @Test
     public void getGroupsWithBriefRepresentation() {
         RealmResource realm = adminClient.realms().realm("test");
         GroupsResource groupsResource = adminClient.realms().realm("test").groups();
-        
+
         GroupRepresentation group = new GroupRepresentation();
         group.setName("groupWithAttribute");
-        
+
         Map<String, List<String>> attributes = new HashMap<String, List<String>>();
         attributes.put("attribute1", Arrays.asList("attribute1","attribute2"));
 		group.setAttributes(attributes);
         group = createGroup(realm, group);
-        
+
         List<GroupRepresentation> groups = groupsResource.groups("groupWithAttribute", 0, 20);
-        
+
         assertFalse(groups.isEmpty());
         assertNull(groups.get(0).getAttributes());
+    }
+
+    @Test
+    public void getSubGroups() throws Exception {
+        RealmResource realm = adminClient.realms().realm("test");
+
+        GroupRepresentation parent = new GroupRepresentation();
+        parent.setName("parent");
+        parent = createGroup(realm, parent);
+
+        GroupRepresentation child = new GroupRepresentation();
+        child.setName("child");
+        Map<String, List<String>> attributes = new HashMap<String, List<String>>();
+        attributes.put("attribute1", Arrays.asList("value1", "value2"));
+        child.setAttributes(attributes);
+
+        addSubGroup(realm, parent, child);
+
+        // Check brief and full retrieval of subgroups of parent
+        boolean briefRepresentation = true;
+        assertNull(realm.groups().group(parent.getId()).getSubGroups(null, null, briefRepresentation).get(0).getAttributes());
+
+        briefRepresentation = false;
+        assertThat(realm.groups().group(parent.getId()).getSubGroups(null, null, briefRepresentation).get(0).getAttributes().get("attribute1"), containsInAnyOrder("value1", "value2"));
     }
 
     @Test
@@ -1074,7 +1134,7 @@ public class GroupTest extends AbstractGroupTest {
         for (GroupRepresentation group : realm.groups().groups()) {
             GroupResource resource = realm.groups().group(group.getId());
             resource.remove();
-            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
         }
 
         // Add 20 new groups with known names
@@ -1091,8 +1151,20 @@ public class GroupTest extends AbstractGroupTest {
         List<GroupRepresentation> allGroups = realm.groups().groups();
         assertEquals(20, allGroups.size());
 
-        List<GroupRepresentation> slice = realm.groups().groups(5, 7);
+        List<GroupRepresentation> slice = realm.groups().groups(0, 7);
         assertEquals(7, slice.size());
+
+        slice = realm.groups().groups(null, 7);
+        assertEquals(7, slice.size());
+
+        slice = realm.groups().groups(10, null);
+        assertEquals(10, slice.size());
+
+        slice = realm.groups().groups(5, 7);
+        assertEquals(7, slice.size());
+
+        slice = realm.groups().groups(15, 7);
+        assertEquals(5, slice.size());
 
         List<GroupRepresentation> search = realm.groups().groups("group1",0,20);
         assertEquals(11, search.size());
@@ -1104,19 +1176,43 @@ public class GroupTest extends AbstractGroupTest {
         assertEquals(0, noResultSearch.size());
 
         // Count
-        assertEquals(new Long(allGroups.size()), realm.groups().count().get("count"));
-        assertEquals(new Long(search.size()), realm.groups().count("group1").get("count"));
-        assertEquals(new Long(noResultSearch.size()), realm.groups().count("abcd").get("count"));
+        assertEquals(Long.valueOf(allGroups.size()), realm.groups().count().get("count"));
+        assertEquals(Long.valueOf(search.size()), realm.groups().count("group1").get("count"));
+        assertEquals(Long.valueOf(noResultSearch.size()), realm.groups().count("abcd").get("count"));
 
         // Add a subgroup for onlyTopLevel flag testing
         GroupRepresentation level2Group = new GroupRepresentation();
         level2Group.setName("group1111");
         Response response = realm.groups().group(firstGroupId).subGroup(level2Group);
         response.close();
-        assertAdminEvents.assertEvent("test", OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(firstGroupId), level2Group, ResourceType.GROUP);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AdminEventPaths.groupSubgroupsPath(firstGroupId), level2Group, ResourceType.GROUP);
 
-        assertEquals(new Long(allGroups.size()), realm.groups().count(true).get("count"));
-        assertEquals(new Long(allGroups.size() + 1), realm.groups().count(false).get("count"));
+        assertEquals(Long.valueOf(allGroups.size()), realm.groups().count(true).get("count"));
+        assertEquals(Long.valueOf(allGroups.size() + 1), realm.groups().count(false).get("count"));
+        //add another subgroup
+        GroupRepresentation level2Group2 = new GroupRepresentation();
+        level2Group2.setName("group111111");
+        realm.groups().group(firstGroupId).subGroup(level2Group2);
+        //search and count for group with string group11 -> return 2 top level group, group11 and group0 having subgroups group1111 and group111111
+        search = realm.groups().groups("group11",0,10);
+        assertEquals(2, search.size());
+        GroupRepresentation group0 = search.stream().filter(group -> "group0".equals(group.getName())).findAny().orElseGet(null);
+        assertNotNull(group0);
+        assertEquals(2,group0.getSubGroups().size());
+        assertThat(group0.getSubGroups().stream().map(GroupRepresentation::getName).collect(Collectors.toList()), Matchers.containsInAnyOrder("group1111", "group111111"));
+        assertEquals(countLeafGroups(search), realm.groups().count("group11").get("count"));
+    }
+
+    private Long countLeafGroups(List<GroupRepresentation> search) {
+        long counter = 0;
+        for(GroupRepresentation group : search) {
+            if(group.getSubGroups().isEmpty()) {
+                counter += 1;
+                continue;
+            }
+            counter += countLeafGroups(group.getSubGroups());
+        }
+        return counter;
     }
 
     @Test
@@ -1127,7 +1223,7 @@ public class GroupTest extends AbstractGroupTest {
         for (GroupRepresentation group : realm.groups().groups()) {
             GroupResource resource = realm.groups().group(group.getId());
             resource.remove();
-            assertAdminEvents.assertEvent("test", OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
+            assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupPath(group.getId()), ResourceType.GROUP);
         }
 
         // Create two pages worth of groups in a random order
@@ -1148,7 +1244,7 @@ public class GroupTest extends AbstractGroupTest {
         Comparator<GroupRepresentation> compareByName = Comparator.comparing(GroupRepresentation::getName);
 
         // Assert that all groups are returned in order
-        List<GroupRepresentation> allGroups = realm.groups().groups();
+        List<GroupRepresentation> allGroups = realm.groups().groups(0, 100);
         assertEquals(40, allGroups.size());
         assertTrue(Comparators.isInStrictOrder(allGroups, compareByName));
 
@@ -1162,7 +1258,7 @@ public class GroupTest extends AbstractGroupTest {
         assertTrue(Comparators.isInStrictOrder(secondPage, compareByName));
 
         // Check that the ordering of groups across multiple pages is correct
-        // Since the individual pages are ordered it is sufficient to compare 
+        // Since the individual pages are ordered it is sufficient to compare
         // every group from the first page to the first group of the second page
         GroupRepresentation firstGroupOnSecondPage = secondPage.get(0);
         for (GroupRepresentation firstPageGroup : firstPage) {
@@ -1172,10 +1268,39 @@ public class GroupTest extends AbstractGroupTest {
     }
 
     @Test
+    public void removeAllGroupAttributes() {
+        final var realm = adminClient.realms().realm("test");
+        final var groupName = "remove-all-attributes-group";
+
+        final Map<String, List<String>> initialAttributes = Map.of("test-key", List.of("test-val"));
+        final var groupToCreate =
+                GroupBuilder.create().name(groupName).attributes(initialAttributes).build();
+        final var groupsResource = realm.groups();
+        try (final Response response = groupsResource.add(groupToCreate)) {
+            final var groupId = ApiUtil.getCreatedId(response);
+
+            final var groupResource = groupsResource.group(groupId);
+            final var createdGroup = groupResource.toRepresentation();
+            assertThat(createdGroup.getAttributes(), equalTo(initialAttributes));
+
+            final var groupToUpdate =
+                    GroupBuilder.create().name(groupName).attributes(Collections.emptyMap()).build();
+            groupResource.update(groupToUpdate);
+
+            final var updatedGroup = groupResource.toRepresentation();
+            assertThat(updatedGroup.getAttributes(), anEmptyMap());
+        }
+    }
+
+    @Test
     public void testBriefRepresentationOnGroupMembers() {
         RealmResource realm = adminClient.realms().realm("test");
         String groupName = "brief-grouptest-group";
         String userName = "brief-grouptest-user";
+
+        // enable user profile unmanaged attributes
+        UserProfileResource upResource = realm.users().userProfile();
+        UPConfig cfg = VerifyProfileTest.enableUnmanagedAttributes(upResource);
 
         GroupsResource groups = realm.groups();
         try (Response response = groups.add(GroupBuilder.create().name(groupName).build())) {
@@ -1204,6 +1329,9 @@ public class GroupTest extends AbstractGroupTest {
 
             group.remove();
             user.remove();
+        } finally {
+            cfg.setUnmanagedAttributePolicy(null);
+            upResource.update(cfg);
         }
     }
 
@@ -1230,17 +1358,82 @@ public class GroupTest extends AbstractGroupTest {
 
         final List<GroupRepresentation> searchResultGroups = realm.groups().groups(searchFor, 0, 10);
 
-        Assert.assertFalse(searchResultGroups.isEmpty());
-        Assert.assertEquals(expectedRootGroup.getId(), searchResultGroups.get(0).getId());
-        Assert.assertEquals(expectedRootGroup.getName(), searchResultGroups.get(0).getName());
+        assertFalse(searchResultGroups.isEmpty());
+        assertEquals(expectedRootGroup.getId(), searchResultGroups.get(0).getId());
+        assertEquals(expectedRootGroup.getName(), searchResultGroups.get(0).getName());
 
         List<GroupRepresentation> searchResultSubGroups = searchResultGroups.get(0).getSubGroups();
-        Assert.assertEquals(expectedChildGroup.getId(), searchResultSubGroups.get(0).getId());
-        Assert.assertEquals(expectedChildGroup.getName(), searchResultSubGroups.get(0).getName());
+        assertEquals(expectedChildGroup.getId(), searchResultSubGroups.get(0).getId());
+        assertEquals(expectedChildGroup.getName(), searchResultSubGroups.get(0).getName());
 
         searchResultSubGroups.remove(0);
-        Assert.assertTrue(searchResultSubGroups.isEmpty());
+        assertTrue(searchResultSubGroups.isEmpty());
         searchResultGroups.remove(0);
-        Assert.assertTrue(searchResultGroups.isEmpty());
+        assertTrue(searchResultGroups.isEmpty());
+    }
+
+    public void testParentAndChildGroup(String parentName, String childName) {
+        RealmResource realm = adminClient.realms().realm("test");
+        GroupRepresentation parentGroup = new GroupRepresentation();
+        parentGroup.setName(parentName);
+        parentGroup = createGroup(realm, parentGroup);
+        GroupRepresentation childGroup = new GroupRepresentation();
+        childGroup.setName(childName);
+        try (Response response = realm.groups().group(parentGroup.getId()).subGroup(childGroup)) {
+            assertEquals(201, response.getStatus()); // created status
+            childGroup.setId(ApiUtil.getCreatedId(response));
+        }
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE,
+                AdminEventPaths.groupSubgroupsPath(parentGroup.getId()), childGroup, ResourceType.GROUP);
+
+        List<GroupRepresentation> groupsFound = realm.groups().groups(parentGroup.getName(), true, 0, 1, true);
+        Assert.assertEquals(1, groupsFound.size());
+        Assert.assertEquals(parentGroup.getId(), groupsFound.iterator().next().getId());
+        Assert.assertEquals(0, groupsFound.iterator().next().getSubGroups().size());
+        parentGroup = groupsFound.iterator().next();
+        Assert.assertEquals(KeycloakModelUtils.buildGroupPath(GroupProvider.DEFAULT_ESCAPE_SLASHES, parentName),
+                parentGroup.getPath());
+
+        groupsFound = realm.groups().groups(childGroup.getName(), true, 0, 1, true);
+        Assert.assertEquals(1, groupsFound.size());
+        Assert.assertEquals(parentGroup.getId(), groupsFound.iterator().next().getId());
+        Assert.assertEquals(1, groupsFound.iterator().next().getSubGroups().size());
+        Assert.assertEquals(childGroup.getId(), groupsFound.iterator().next().getSubGroups().iterator().next().getId());
+        childGroup = groupsFound.iterator().next().getSubGroups().iterator().next();
+        Assert.assertEquals(KeycloakModelUtils.normalizeGroupPath(
+                KeycloakModelUtils.buildGroupPath(GroupProvider.DEFAULT_ESCAPE_SLASHES, parentName, childName)),
+                childGroup.getPath());
+
+        GroupRepresentation groupFound = realm.getGroupByPath(parentGroup.getPath());
+        Assert.assertNotNull(groupFound);
+        Assert.assertEquals(parentGroup.getId(), groupFound.getId());
+        groupFound = realm.getGroupByPath(childGroup.getPath());
+        Assert.assertNotNull(groupFound);
+        Assert.assertEquals(childGroup.getId(), groupFound.getId());
+
+        realm.groups().group(childGroup.getId()).remove();
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupPath(childGroup.getId()), ResourceType.GROUP);
+        realm.groups().group(parentGroup.getId()).remove();
+        assertAdminEvents.assertEvent(testRealmId, OperationType.DELETE, AdminEventPaths.groupPath(parentGroup.getId()), ResourceType.GROUP);
+    }
+
+    @Test
+    public void testGroupsWithSpaces() {
+         testParentAndChildGroup("parent space", "child space");
+    }
+
+    @Test
+    public void testGroupsWithSlashes() {
+         testParentAndChildGroup("parent/slash", "child/slash");
+    }
+
+    /**
+     * Assert that when you create/move/update a group name, the response is not Http 409 Conflict and the message does not
+     * correspond to the returned user-friendly message in such cases
+     */
+    private void assertSameNameNotAllowed(Response response, String expectedErrorMessage) {
+        assertEquals(409, response.getStatus());
+        ErrorRepresentation error = response.readEntity(ErrorRepresentation.class);
+        Assert.assertEquals(expectedErrorMessage, error.getErrorMessage());
     }
 }

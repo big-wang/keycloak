@@ -16,20 +16,15 @@
  */
 package org.keycloak.client.admin.cli;
 
-import org.jboss.aesh.console.AeshConsoleBuilder;
-import org.jboss.aesh.console.AeshConsoleImpl;
-import org.jboss.aesh.console.Prompt;
-import org.jboss.aesh.console.command.registry.AeshCommandRegistryBuilder;
-import org.jboss.aesh.console.command.registry.CommandRegistry;
-import org.jboss.aesh.console.settings.Settings;
-import org.jboss.aesh.console.settings.SettingsBuilder;
-import org.keycloak.client.admin.cli.aesh.AeshEnhancer;
-import org.keycloak.client.admin.cli.aesh.Globals;
-import org.keycloak.client.admin.cli.aesh.ValveInputStream;
 import org.keycloak.client.admin.cli.commands.KcAdmCmd;
+import org.keycloak.client.admin.cli.util.ClassLoaderUtil;
+import org.keycloak.client.admin.cli.util.OsUtil;
+import org.keycloak.common.crypto.CryptoIntegration;
 
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.io.PrintWriter;
+
+import picocli.CommandLine;
+import picocli.CommandLine.Model.CommandSpec;
 
 /**
  * @author <a href="mailto:mstrukel@redhat.com">Marko Strukelj</a>
@@ -37,58 +32,30 @@ import java.util.Arrays;
 public class KcAdmMain {
 
     public static void main(String [] args) {
-
-        Globals.stdin = new ValveInputStream();
-
-        Settings settings = new SettingsBuilder()
-                .logging(false)
-                .readInputrc(false)
-                .disableCompletion(true)
-                .disableHistory(true)
-                .enableAlias(false)
-                .enableExport(false)
-                .inputStream(Globals.stdin)
-                .create();
-
-        CommandRegistry registry = new AeshCommandRegistryBuilder()
-                .command(KcAdmCmd.class)
-                .create();
-
-        AeshConsoleImpl console = (AeshConsoleImpl) new AeshConsoleBuilder()
-                .settings(settings)
-                .commandRegistry(registry)
-                .prompt(new Prompt(""))
-//                .commandInvocationProvider(new CommandInvocationServices() {
-//
-//                })
-                .create();
-
-        AeshEnhancer.enhance(console);
-
-        // work around parser issues with quotes and brackets
-        ArrayList<String> arguments = new ArrayList<>();
-        arguments.add("kcadm");
-        arguments.addAll(Arrays.asList(args));
-        Globals.args = arguments;
-
-        StringBuilder b = new StringBuilder();
-        for (String s : args) {
-            // quote if necessary
-            boolean needQuote = false;
-            needQuote = s.indexOf(' ') != -1 || s.indexOf('\"') != -1 || s.indexOf('\'') != -1;
-            b.append(' ');
-            if (needQuote) {
-                b.append('\'');
-            }
-            b.append(s);
-            if (needQuote) {
-                b.append('\'');
-            }
+        String libDir = System.getProperty("kc.lib.dir");
+        if (libDir == null) {
+            throw new RuntimeException("System property kc.lib.dir needs to be set");
         }
-        console.setEcho(false);
+        ClassLoader cl = ClassLoaderUtil.resolveClassLoader(libDir);
+        Thread.currentThread().setContextClassLoader(cl);
 
-        console.execute("kcadm" + b.toString());
+        CryptoIntegration.init(cl);
 
-        console.start();
+        CommandLine cli = createCommandLine();
+        int exitCode = cli.execute(args);
+        System.exit(exitCode);
     }
+
+    public static CommandLine createCommandLine() {
+        CommandSpec spec = CommandSpec.forAnnotatedObject(new KcAdmCmd()).name(OsUtil.CMD);
+
+        CommandLine cmd = new CommandLine(spec);
+
+        cmd.setExecutionExceptionHandler(new ExecutionExceptionHandler());
+        cmd.setParameterExceptionHandler(new ShortErrorMessageHandler());
+        cmd.setErr(new PrintWriter(System.err, true));
+
+        return cmd;
+    }
+
 }

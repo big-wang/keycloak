@@ -20,7 +20,6 @@ package org.keycloak.authorization.model;
 
 import org.keycloak.representations.idm.authorization.DecisionStrategy;
 import org.keycloak.representations.idm.authorization.PolicyEnforcementMode;
-import org.keycloak.storage.SearchableModelField;
 
 /**
  * Represents a resource server, whose resources are managed and protected. A resource server is basically an existing
@@ -29,10 +28,6 @@ import org.keycloak.storage.SearchableModelField;
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
 public interface ResourceServer {
-
-    public static class SearchableFields {
-        public static final SearchableModelField<ResourceServer> ID = new SearchableModelField<>("id", String.class);
-    }
 
     /**
      * Returns the unique identifier for this instance.
@@ -44,7 +39,7 @@ public interface ResourceServer {
     /**
      * Indicates if the resource server is allowed to manage its own resources remotely using the Protection API.
      *
-     * {@code true} if the resource server is allowed to managed them remotely
+     * @return {@code true} if the resource server is allowed to managed them remotely
      */
     boolean isAllowRemoteResourceManagement();
 
@@ -83,4 +78,10 @@ public interface ResourceServer {
      * @return the decision strategy
      */
     DecisionStrategy getDecisionStrategy();
+
+    /**
+     * Returns id of a client that this {@link ResourceServer} is associated with
+     * @return id of client
+     */
+    String getClientId();
 }

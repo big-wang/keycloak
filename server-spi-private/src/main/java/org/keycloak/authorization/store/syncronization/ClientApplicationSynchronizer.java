@@ -1,13 +1,12 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2016 Red Hat, Inc., and individual contributors
- * as indicated by the @author tags.
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,10 +49,10 @@ public class ClientApplicationSynchronizer implements Synchronizer<ClientRemoved
     private void removeFromClientPolicies(ClientRemovedEvent event, AuthorizationProvider authorizationProvider) {
         StoreFactory storeFactory = authorizationProvider.getStoreFactory();
         ResourceServerStore store = storeFactory.getResourceServerStore();
-        ResourceServer resourceServer = store.findById(event.getClient().getId());
+        ResourceServer resourceServer = store.findByClient(event.getClient());
 
         if (resourceServer != null) {
-            storeFactory.getResourceServerStore().delete(resourceServer.getId());
+            storeFactory.getResourceServerStore().delete(event.getClient());
         }
 
         Map<Policy.FilterOption, String[]> attributes = new EnumMap<>(Policy.FilterOption.class);
@@ -62,7 +61,7 @@ public class ClientApplicationSynchronizer implements Synchronizer<ClientRemoved
         attributes.put(Policy.FilterOption.CONFIG, new String[] {"clients", event.getClient().getId()});
         attributes.put(Policy.FilterOption.ANY_OWNER, Policy.FilterOption.EMPTY_FILTER);
 
-        List<Policy> search = storeFactory.getPolicyStore().findByResourceServer(attributes, null, -1, -1);
+        List<Policy> search = storeFactory.getPolicyStore().find(null, attributes, null, null);
 
         for (Policy policy : search) {
             PolicyProviderFactory policyFactory = authorizationProvider.getProviderFactory(policy.getType());
@@ -71,12 +70,7 @@ public class ClientApplicationSynchronizer implements Synchronizer<ClientRemoved
 
             clients.remove(event.getClient().getId());
 
-            if (clients.isEmpty()) {
-                policyFactory.onRemove(policy, authorizationProvider);
-                authorizationProvider.getStoreFactory().getPolicyStore().delete(policy.getId());
-            } else {
-                policyFactory.onUpdate(policy, representation, authorizationProvider);
-            }
+            policyFactory.onUpdate(policy, representation, authorizationProvider);
         }
     }
 }

@@ -17,6 +17,8 @@
 
 package org.keycloak.testsuite.arquillian.undertow;
 
+import static org.keycloak.testsuite.KeycloakServer.registerScriptProviders;
+
 import io.undertow.Undertow;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.handlers.PathHandler;
@@ -36,6 +38,7 @@ import org.jboss.arquillian.container.spi.client.protocol.metadata.HTTPContext;
 import org.jboss.arquillian.container.spi.client.protocol.metadata.ProtocolMetaData;
 import org.jboss.arquillian.container.spi.client.protocol.metadata.Servlet;
 import org.jboss.logging.Logger;
+import org.jboss.resteasy.core.ResteasyDeploymentImpl;
 import org.jboss.resteasy.plugins.server.servlet.ResteasyContextParameters;
 import org.jboss.resteasy.plugins.server.undertow.UndertowJaxrsServer;
 import org.jboss.resteasy.spi.ResteasyDeployment;
@@ -45,9 +48,10 @@ import org.jboss.shrinkwrap.descriptor.api.Descriptor;
 import org.jboss.shrinkwrap.undertow.api.UndertowWebArchive;
 import org.keycloak.common.util.reflections.Reflections;
 import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.services.DefaultKeycloakSessionFactory;
 import org.keycloak.services.managers.ApplianceBootstrap;
 import org.keycloak.services.resources.KeycloakApplication;
+import org.keycloak.services.resteasy.ResteasyKeycloakApplication;
 import org.keycloak.testsuite.JsonConfigProviderFactory;
 import org.keycloak.testsuite.KeycloakServer;
 import org.keycloak.testsuite.UndertowRequestFilter;
@@ -57,14 +61,14 @@ import org.keycloak.testsuite.utils.undertow.UndertowWarClassLoader;
 import org.keycloak.util.JsonSerialization;
 
 import io.undertow.servlet.api.InstanceHandle;
-import javax.servlet.DispatcherType;
-import javax.servlet.ServletException;
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.ServletException;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import javax.servlet.Filter;
+import jakarta.servlet.Filter;
 import org.xnio.Options;
 import org.xnio.SslClientAuthMode;
 
@@ -74,24 +78,22 @@ public class KeycloakOnUndertow implements DeployableContainer<KeycloakOnUnderto
 
     private KeycloakUndertowJaxrsServer undertow;
     private KeycloakOnUndertowConfiguration configuration;
-    private KeycloakSessionFactory sessionFactory;
+    private DefaultKeycloakSessionFactory sessionFactory;
 
     Map<String, String> deployedArchivesToContextPath = new ConcurrentHashMap<>();
 
     private DeploymentInfo createAuthServerDeploymentInfo() {
-        ResteasyDeployment deployment = new ResteasyDeployment();
-        deployment.setApplicationClass(KeycloakApplication.class.getName());
+        ResteasyDeployment deployment = new ResteasyDeploymentImpl();
+        deployment.setApplicationClass(ResteasyKeycloakApplication.class.getName());
 
         // RESTEASY-2034
         deployment.setProperty(ResteasyContextParameters.RESTEASY_DISABLE_HTML_SANITIZER, true);
-
-        // Prevent double gzip encoding of resources
-        deployment.getDisabledProviderClasses().add("org.jboss.resteasy.plugins.interceptors.encoding.GZIPEncodingInterceptor");
 
         DeploymentInfo di = undertow.undertowDeployment(deployment);
         di.setClassLoader(getClass().getClassLoader());
         di.setContextPath("/auth");
         di.setDeploymentName("Keycloak");
+        di.setDefaultEncoding("UTF-8");
         if (configuration.getKeycloakConfigPropertyOverridesMap() != null) {
             try {
                 di.addInitParameter(JsonConfigProviderFactory.SERVER_CONTEXT_CONFIG_PROPERTY_OVERRIDES,
@@ -221,7 +223,9 @@ public class KeycloakOnUndertow implements DeployableContainer<KeycloakOnUnderto
 
         DeploymentInfo di = createAuthServerDeploymentInfo();
         undertow.deploy(di);
-        sessionFactory = KeycloakApplication.getSessionFactory();
+        sessionFactory = (DefaultKeycloakSessionFactory) KeycloakApplication.getSessionFactory();
+
+        registerScriptProviders(sessionFactory);
 
         setupDevConfig();
 
@@ -229,15 +233,11 @@ public class KeycloakOnUndertow implements DeployableContainer<KeycloakOnUnderto
     }
 
     protected void setupDevConfig() {
-        KeycloakSession session = sessionFactory.create();
-        try {
+        try (KeycloakSession session = sessionFactory.create()) {
             session.getTransactionManager().begin();
             if (new ApplianceBootstrap(session).isNoMasterUser()) {
                 new ApplianceBootstrap(session).createMasterRealmUser("admin", "admin");
             }
-            session.getTransactionManager().commit();
-        } finally {
-            session.close();
         }
     }
 
@@ -249,8 +249,15 @@ public class KeycloakOnUndertow implements DeployableContainer<KeycloakOnUnderto
         }
 
         log.info("Stopping auth server.");
-        sessionFactory.close();
-        undertow.stop();
+        if (sessionFactory != null) {
+            sessionFactory.close();
+        }
+        if (undertow != null) {
+            undertow.stop();
+        }
+
+        sessionFactory = null;
+        undertow = null;
     }
 
     private boolean isRemoteMode() {

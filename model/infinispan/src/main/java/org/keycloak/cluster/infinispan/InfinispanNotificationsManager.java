@@ -51,9 +51,12 @@ import org.keycloak.cluster.ClusterListener;
 import org.keycloak.cluster.ClusterProvider;
 import org.keycloak.common.util.ConcurrentMultivaluedHashMap;
 import org.keycloak.common.util.Retry;
+import org.keycloak.connections.infinispan.DefaultInfinispanConnectionProviderFactory;
 import org.keycloak.executors.ExecutorsProvider;
 import org.keycloak.models.KeycloakSession;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
+
+import static org.keycloak.cluster.infinispan.InfinispanClusterProvider.TASK_KEY_PREFIX;
 
 /**
  * Impl for sending infinispan messages across cluster and listening to them
@@ -157,7 +160,9 @@ public class InfinispanNotificationsManager {
             // Add directly to remoteCache. Will notify remote listeners on all nodes in all DCs
             Retry.executeWithBackoff((int iteration) -> {
                 try {
-                    workRemoteCache.put(eventKey, wrappedEvent, 120, TimeUnit.SECONDS);
+                    DefaultInfinispanConnectionProviderFactory.runWithReadLockOnCacheManager(() ->
+                            workRemoteCache.put(eventKey, wrappedEvent, 120, TimeUnit.SECONDS)
+                    );
                 } catch (HotRodClientException re) {
                 if (logger.isDebugEnabled()) {
                     logger.debugf(re, "Failed sending notification to remote cache '%s'. Key: '%s', iteration '%s'. Will try to retry the task",
@@ -230,14 +235,23 @@ public class InfinispanNotificationsManager {
             // TODO: Look at CacheEventConverter stuff to possibly include value in the event and avoid additional remoteCache request
             try {
                 listenersExecutor.submit(() -> {
-
-                    Object value = remoteCache.get(key);
+                    Object value = DefaultInfinispanConnectionProviderFactory.runWithReadLockOnCacheManager(() ->
+                            // We've seen deadlocks in Infinispan 14.x when shutting down Infinispan concurrently, therefore wrapping this
+                            remoteCache.get(key)
+                    );
                     eventReceived(key, (Serializable) value);
 
                 });
             } catch (RejectedExecutionException ree) {
-                logger.errorf("Rejected submitting of the event for key: %s. Value: %s, Server going to shutdown or pool exhausted. Pool: %s", key, workCache.get(key), listenersExecutor.toString());
-                throw ree;
+                // server is shutting down or pool was terminated - don't throw errors
+                if (ree.getMessage() != null && (ree.getMessage().contains("Terminated") || ree.getMessage().contains("Shutting down"))) {
+                    logger.warnf("Rejected submitting of the event for key: %s because server is shutting down or pool was terminated.", key);
+                    logger.debug(ree);
+                } else {
+                    // avoid touching the cache when creating a log message to avoid a deadlock in Infinispan 12.1.7.Final
+                    logger.errorf("Rejected submitting of the event for key: %s. Server going to shutdown or pool exhausted. Pool: %s", key, listenersExecutor.toString());
+                    throw ree;
+                }
             }
         }
 
@@ -245,7 +259,9 @@ public class InfinispanNotificationsManager {
 
     private void eventReceived(String key, Serializable obj) {
         if (!(obj instanceof WrapperClusterEvent)) {
-            if (obj == null) {
+            // Items with the TASK_KEY_PREFIX might be gone fast once the locking is complete, therefore, don't log them.
+            // It is still good to have the warning in case of real events return null because they have been, for example, expired
+            if (obj == null && !key.startsWith(TASK_KEY_PREFIX)) {
                 logger.warnf("Event object wasn't available in remote cache after event was received. Event key: %s", key);
             }
             return;

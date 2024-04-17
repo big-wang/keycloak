@@ -1,26 +1,27 @@
 package org.keycloak.quarkus.runtime.configuration.mappers;
 
-import java.util.Arrays;
+import org.keycloak.config.MetricsOptions;
+
+import static org.keycloak.quarkus.runtime.configuration.Configuration.isTrue;
+import static org.keycloak.quarkus.runtime.configuration.mappers.PropertyMapper.fromOption;
 
 
 final class MetricsPropertyMappers {
 
+    public static final String METRICS_ENABLED_MSG = "metrics are enabled";
+
     private MetricsPropertyMappers(){}
 
-    public static PropertyMapper[] getMetricsPropertyMappers() {
+    public static PropertyMapper<?>[] getMetricsPropertyMappers() {
         return new PropertyMapper[] {
-                builder().from("metrics.enabled")
-                        .to("quarkus.datasource.metrics.enabled")
-                        .isBuildTimeProperty(true)
-                        .defaultValue(Boolean.FALSE.toString())
-                        .description("If the server should expose metrics and healthcheck. If enabled, metrics are available at the '/metrics' endpoint and healthcheck at the '/health' endpoint.")
+                fromOption(MetricsOptions.METRICS_ENABLED)
+                        .to("quarkus.micrometer.enabled")
                         .paramLabel(Boolean.TRUE + "|" + Boolean.FALSE)
-                        .expectedValues(Arrays.asList(Boolean.TRUE.toString(), Boolean.FALSE.toString()))
                         .build()
         };
     }
 
-    private static PropertyMapper.Builder builder() {
-        return PropertyMapper.builder(ConfigCategory.METRICS);
+    public static boolean metricsEnabled() {
+        return isTrue(MetricsOptions.METRICS_ENABLED);
     }
 }

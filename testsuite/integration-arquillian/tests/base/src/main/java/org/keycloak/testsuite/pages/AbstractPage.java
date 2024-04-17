@@ -23,7 +23,6 @@ import org.keycloak.common.util.KeycloakUriBuilder;
 import org.keycloak.testsuite.arquillian.SuiteContext;
 import org.keycloak.testsuite.util.DroneUtils;
 import org.keycloak.testsuite.util.OAuthClient;
-import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
 
 import java.net.URI;
@@ -60,6 +59,10 @@ public abstract class AbstractPage {
     abstract public boolean isCurrent();
 
     abstract public void open() throws Exception;
+
+    public WebDriver getDriver() {
+        return driver;
+    }
 
     public void setDriver(WebDriver driver) {
         this.driver = driver ;

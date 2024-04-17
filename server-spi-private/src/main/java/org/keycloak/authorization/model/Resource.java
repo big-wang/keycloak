@@ -18,8 +18,6 @@
 
 package org.keycloak.authorization.model;
 
-import org.keycloak.storage.SearchableModelField;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,44 +29,25 @@ import java.util.Set;
  */
 public interface Resource {
 
-    public static class SearchableFields {
-        public static final SearchableModelField<Resource> ID = new SearchableModelField<>("id", String.class);
-        public static final SearchableModelField<Resource> NAME = new SearchableModelField<>("name", String.class);
-        public static final SearchableModelField<Resource> RESOURCE_SERVER_ID = new SearchableModelField<>("resourceServerId", String.class);
-        public static final SearchableModelField<Resource> OWNER = new SearchableModelField<>("owner", String.class);
-        public static final SearchableModelField<Resource> TYPE = new SearchableModelField<>("type", String.class);
-
-        public static final SearchableModelField<Resource> URI = new SearchableModelField<>("uris", String.class);
-        public static final SearchableModelField<Resource> SCOPE_ID = new SearchableModelField<>("scope", String.class);
-        public static final SearchableModelField<Resource> OWNER_MANAGED_ACCESS = new SearchableModelField<>("ownerManagedAccess", Boolean.class);
-    }
-    
     public static enum FilterOption {
-        ID("id", SearchableFields.ID),
-        NAME("name", SearchableFields.NAME),
-        EXACT_NAME("name", SearchableFields.NAME),
-        OWNER("owner", SearchableFields.OWNER),
-        TYPE("type", SearchableFields.TYPE),
-        URI("uri", SearchableFields.URI),
-        URI_NOT_NULL("uri_not_null", SearchableFields.URI),
-        OWNER_MANAGED_ACCESS("ownerManagedAccess", SearchableFields.OWNER_MANAGED_ACCESS),
-        SCOPE_ID("scopes.id", SearchableFields.SCOPE_ID);
+        ID("id"),
+        NAME("name"),
+        EXACT_NAME("name"),
+        OWNER("owner"),
+        TYPE("type"),
+        URI("uri"),
+        URI_NOT_NULL("uri_not_null"),
+        OWNER_MANAGED_ACCESS("ownerManagedAccess"),
+        SCOPE_ID("scopes.id");
 
         private final String name;
-        private final SearchableModelField<Resource> searchableModelField;
 
-        FilterOption(String name, SearchableModelField<Resource> searchableModelField) {
+        FilterOption(String name) {
             this.name = name;
-            this.searchableModelField = searchableModelField;
         }
-
 
         public String getName() {
             return name;
-        }
-
-        public SearchableModelField<Resource> getSearchableModelField() {
-            return searchableModelField;
         }
     }
 
@@ -133,7 +112,7 @@ public interface Resource {
     /**
      * Sets a string representing the type of this resource.
      *
-     * @return the type of this resource or null if not defined
+     * @param type the type of this resource or null if not defined
      */
     void setType(String type);
 
@@ -154,7 +133,7 @@ public interface Resource {
     /**
      * Sets an icon {@link java.net.URI} for this resource.
      *
-     * @return a uri for an icon
+     * @param iconUri an uri for an icon
      */
     void setIconUri(String iconUri);
 
@@ -163,7 +142,7 @@ public interface Resource {
      *
      * @return the resource server associated with this resource
      */
-     String getResourceServer();
+     ResourceServer getResourceServer();
 
     /**
      * Returns the resource's owner, which is usually an identifier that uniquely identifies the resource's owner.
@@ -203,6 +182,7 @@ public interface Resource {
     /**
      * Returns the first value of an attribute with the given <code>name</code>
      *
+     * @param name of the attribute
      * @return the first value of an attribute
      */
     String getSingleAttribute(String name);
@@ -210,6 +190,7 @@ public interface Resource {
     /**
      * Returns the values of an attribute with the given <code>name</code>
      *
+     * @param name of the attribute
      * @return the values of an attribute
      */
     List<String> getAttribute(String name);
@@ -218,8 +199,7 @@ public interface Resource {
      * Sets an attribute with the given <code>name</code> and <code>values</code>.
      *
      * @param name the attribute name
-     * @param value the attribute values
-     * @return a map holding the attributes associated with this resource
+     * @param values the attribute values
      */
     void setAttribute(String name, List<String> values);
 

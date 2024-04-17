@@ -17,7 +17,6 @@
 package org.keycloak.testsuite.adapter.example.fuse;
 
 import static org.keycloak.testsuite.auth.page.AuthRealm.DEMO;
-import static org.keycloak.testsuite.util.URLAssert.waitUntilUrlStartsWith;
 import static org.keycloak.testsuite.utils.io.IOUtil.loadRealm;
 import static org.keycloak.testsuite.util.URLAssert.assertCurrentUrlStartsWith;
 
@@ -114,10 +113,10 @@ public class EAP6Fuse6HawtioAdapterTest extends AbstractExampleAdapterTest imple
         WaitUtils.waitForPageToLoad();
 
         log.debug("log in");
-        waitUntilUrlStartsWith(testRealmLoginPageFuse.toString(), 60);
+        assertCurrentUrlStartsWith(testRealmLoginPageFuse.toString()); //60
         testRealmLoginPageFuse.form().login("root", "password");
 
-        waitUntilUrlStartsWith(hawtioPage.toString() + "/welcome", 180);
+        assertCurrentUrlStartsWith(hawtioPage.toString() + "/welcome"); //180
 
         hawtioPage.logout(jsDriver);
         WaitUtils.waitForPageToLoad();

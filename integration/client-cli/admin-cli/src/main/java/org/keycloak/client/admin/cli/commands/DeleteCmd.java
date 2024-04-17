@@ -16,37 +16,27 @@
  */
 package org.keycloak.client.admin.cli.commands;
 
-import org.jboss.aesh.cl.CommandDefinition;
-
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
+import picocli.CommandLine.Command;
+
 import static org.keycloak.client.admin.cli.util.ConfigUtil.DEFAULT_CONFIG_FILE_STRING;
 import static org.keycloak.client.admin.cli.util.OsUtil.CMD;
-import static org.keycloak.client.admin.cli.util.OsUtil.EOL;
 import static org.keycloak.client.admin.cli.util.OsUtil.PROMPT;
 
 
 /**
  * @author <a href="mailto:mstrukel@redhat.com">Marko Strukelj</a>
  */
-@CommandDefinition(name = "delete", description = "CLIENT [GLOBAL_OPTIONS]")
+@Command(name = "delete", description = "CLIENT [GLOBAL_OPTIONS]")
 public class DeleteCmd extends CreateCmd {
 
-    void initOptions() {
-        super.initOptions();
-        httpVerb = "delete";
+    public DeleteCmd() {
+        this.httpVerb = "delete";
     }
 
     @Override
-    protected boolean nothingToDo() {
-        return noOptions() && (args == null || args.size() == 0);
-    }
-
-    protected String suggestHelp() {
-        return EOL + "Try '" + CMD + " help delete' for more information";
-    }
-
     protected String help() {
         return usage();
     }
@@ -91,7 +81,7 @@ public class DeleteCmd extends CreateCmd {
         out.println("    -F, --fields FILTER       A filter pattern to specify which fields of a JSON response to output");
         out.println("                              Use '" + CMD + " get --help' for more info on FILTER syntax.");
         out.println("    -c, --compressed          Don't pretty print the output");
-        out.println("    -a, --admin-root URL      URL of Admin REST endpoint root if not default - e.g. http://localhost:8080/auth/admin");
+        out.println("    -a, --admin-root URL      URL of Admin REST endpoint root if not default - e.g. http://localhost:8080/admin");
         out.println();
         out.println("Examples:");
         out.println();

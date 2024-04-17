@@ -21,12 +21,13 @@ package org.keycloak.protocol.oidc.endpoints;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 
 import org.jboss.logging.Logger;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
+import org.keycloak.common.Profile;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
@@ -46,8 +47,8 @@ import org.keycloak.protocol.oidc.utils.RedirectUtils;
 import org.keycloak.services.CorsErrorResponseException;
 import org.keycloak.services.ErrorPageException;
 import org.keycloak.services.ServicesLogger;
+import org.keycloak.services.cors.Cors;
 import org.keycloak.services.messages.Messages;
-import org.keycloak.services.resources.Cors;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.util.TokenUtil;
 import org.keycloak.utils.StringUtil;
@@ -192,6 +193,10 @@ public class AuthorizationEndpointChecker {
         }
     }
 
+    public boolean isInvalidResponseType(AuthorizationEndpointChecker.AuthorizationCheckException ex) {
+        return "Missing parameter: response_type".equals(ex.getErrorDescription()) || OAuthErrorException.UNSUPPORTED_RESPONSE_TYPE.equals(ex.getError());
+    }
+
     public void checkInvalidRequestMessage() throws AuthorizationCheckException {
         if (request.getInvalidRequestMessage() != null) {
             event.error(Errors.INVALID_REQUEST);
@@ -206,7 +211,13 @@ public class AuthorizationEndpointChecker {
     }
 
     public void checkValidScope() throws AuthorizationCheckException {
-        if (!TokenManager.isValidScope(request.getScope(), client)) {
+        boolean validScopes;
+        if (Profile.isFeatureEnabled(Profile.Feature.DYNAMIC_SCOPES)) {
+            validScopes = TokenManager.isValidScope(request.getScope(), request.getAuthorizationRequestContext(), client);
+        } else {
+            validScopes = TokenManager.isValidScope(request.getScope(), client);
+        }
+        if (!validScopes) {
             ServicesLogger.LOGGER.invalidParameter(OIDCLoginProtocol.SCOPE_PARAM);
             event.error(Errors.INVALID_REQUEST);
             throw new AuthorizationCheckException(Response.Status.BAD_REQUEST, OAuthErrorException.INVALID_SCOPE, "Invalid scopes: " + request.getScope());
@@ -220,7 +231,7 @@ public class AuthorizationEndpointChecker {
             return;
         }
 
-        if (parsedResponseType.isImplicitOrHybridFlow() && request.getNonce() == null) {
+        if (parsedResponseType.hasResponseType(OIDCResponseType.ID_TOKEN) && request.getNonce() == null) {
             ServicesLogger.LOGGER.missingParameter(OIDCLoginProtocol.NONCE_PARAM);
             event.error(Errors.INVALID_REQUEST);
             throw new AuthorizationCheckException(Response.Status.BAD_REQUEST, OAuthErrorException.INVALID_REQUEST, "Missing parameter: nonce");
@@ -237,7 +248,7 @@ public class AuthorizationEndpointChecker {
         // PKCE not adopted to OAuth2 Implicit Grant and OIDC Implicit Flow,
         // adopted to OAuth2 Authorization Code Grant and OIDC Authorization Code Flow, Hybrid Flow
         // Namely, flows using authorization code.
-        if (parsedResponseType.isImplicitFlow()) return;
+        if (parsedResponseType != null && parsedResponseType.isImplicitFlow()) return;
 
         String pkceCodeChallengeMethod = OIDCAdvancedConfigWrapper.fromClientModel(client).getPkceCodeChallengeMethod();
 

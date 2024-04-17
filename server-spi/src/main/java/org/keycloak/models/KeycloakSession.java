@@ -18,14 +18,13 @@
 package org.keycloak.models;
 
 import org.keycloak.component.ComponentModel;
-import org.keycloak.models.cache.UserCache;
-import org.keycloak.provider.InvalidationHandler;
+import org.keycloak.provider.InvalidationHandler.InvalidableObjectType;
 import org.keycloak.provider.Provider;
 import org.keycloak.services.clientpolicy.ClientPolicyManager;
 import org.keycloak.sessions.AuthenticationSessionProvider;
-import org.keycloak.storage.federated.UserFederatedStorageProvider;
 import org.keycloak.vault.VaultTranscriber;
 
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -33,7 +32,7 @@ import java.util.function.Function;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public interface KeycloakSession extends InvalidationHandler {
+public interface KeycloakSession extends AutoCloseable {
 
     KeycloakContext getContext();
 
@@ -71,7 +70,7 @@ public interface KeycloakSession extends InvalidationHandler {
      * @param clazz
      * @param componentId Component configuration
      * @throws IllegalArgumentException If the realm is not set in the context.
-     * @return Provider configured according to the {@link componentId}, {@code null} if it cannot be instantiated.
+     * @return Provider configured according to the {@param componentId}, {@code null} if it cannot be instantiated.
      */
     <T extends Provider> T getComponentProvider(Class<T> clazz, String componentId);
 
@@ -83,7 +82,7 @@ public interface KeycloakSession extends InvalidationHandler {
      * @param componentId Component configuration
      * @param modelGetter Getter to retrieve componentModel
      * @throws IllegalArgumentException If the realm is not set in the context.
-     * @return Provider configured according to the {@link componentId}, {@code null} if it cannot be instantiated.
+     * @return Provider configured according to the {@param componentId}, {@code null} if it cannot be instantiated.
      */
     <T extends Provider> T getComponentProvider(Class<T> clazz, String componentId, Function<KeycloakSessionFactory, ComponentModel> modelGetter);
 
@@ -125,13 +124,14 @@ public interface KeycloakSession extends InvalidationHandler {
     Object removeAttribute(String attribute);
     void setAttribute(String name, Object value);
 
+    Map<String, Object> getAttributes();
+
     /**
      * Invalidates intermediate states of the given objects, both immediately and at the end of this session.
      * @param type Type of the objects to invalidate
-     * @param ids Identifiers of the invalidated objects
+     * @param params Parameters used for the invalidation
      */
-    @Override
-    void invalidate(InvalidableObjectType type, Object... ids);
+    void invalidate(InvalidableObjectType type, Object... params);
 
     void enlistForClose(Provider provider);
 
@@ -201,102 +201,16 @@ public interface KeycloakSession extends InvalidationHandler {
 
     AuthenticationSessionProvider authenticationSessions();
 
-
+    SingleUseObjectProvider singleUseObjects();
 
     void close();
 
     /**
-     * The user cache
-     *
-     * @return may be null if cache is disabled
-     */
-    UserCache userCache();
-
-    /**
      * A cached view of all users in system including  users loaded by UserStorageProviders
      *
-     * @return
+     * @return UserProvider instance
      */
     UserProvider users();
-
-    /**
-     * @return ClientStorageManager instance
-     */
-    ClientProvider clientStorageManager();
-
-    /**
-     * @return ClientScopeStorageManager instance
-     */
-    ClientScopeProvider clientScopeStorageManager();
-
-    /**
-     * @return RoleStorageManager instance
-     */
-    RoleProvider roleStorageManager();
-
-    /**
-     * @return GroupStorageManager instance
-     */
-    GroupProvider groupStorageManager();
-
-    /**
-     * Un-cached view of all users in system including users loaded by UserStorageProviders
-     *
-     * @return
-     */
-    UserProvider userStorageManager();
-
-    /**
-     * Service that allows you to valid and update credentials for a user
-     *
-     * @return
-     */
-    UserCredentialManager userCredentialManager();
-
-    /**
-     * Keycloak specific local storage for users.  No cache in front, this api talks directly to database configured for Keycloak
-     *
-     * @return
-     */
-    UserProvider userLocalStorage();
-
-    RealmProvider realmLocalStorage();
-
-    /**
-     * Keycloak specific local storage for clients.  No cache in front, this api talks directly to database configured for Keycloak
-     *
-     * @return
-     */
-    ClientProvider clientLocalStorage();
-
-    /**
-     * Keycloak specific local storage for client scopes.  No cache in front, this api talks directly to database configured for Keycloak
-     *
-     * @return
-     */
-    ClientScopeProvider clientScopeLocalStorage();
-
-    /**
-     * Keycloak specific local storage for groups.  No cache in front, this api talks directly to storage configured for Keycloak
-     *
-     * @return
-     */
-    GroupProvider groupLocalStorage();
-
-    /**
-     * Keycloak specific local storage for roles.  No cache in front, this api talks directly to storage configured for Keycloak
-     *
-     * @return
-     */
-    RoleProvider roleLocalStorage();
-
-    /**
-     * Hybrid storage for UserStorageProviders that can't store a specific piece of keycloak data in their external storage.
-     * No cache in front.
-     *
-     * @return
-     */
-    UserFederatedStorageProvider userFederatedStorage();
 
     /**
      * Key manager

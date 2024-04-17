@@ -17,17 +17,31 @@
 package org.keycloak.testsuite.saml;
 
 import org.junit.Test;
+import org.keycloak.dom.saml.v2.SAML2Object;
+import org.keycloak.dom.saml.v2.assertion.AuthnStatementType;
 import org.keycloak.dom.saml.v2.protocol.ResponseType;
 import org.keycloak.dom.saml.v2.protocol.StatusResponseType;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.UserSessionModel;
 import org.keycloak.protocol.saml.SamlConfigAttributes;
+import org.keycloak.saml.common.constants.JBossSAMLURIConstants;
 import org.keycloak.saml.processing.core.saml.v2.common.SAMLDocumentHolder;
 import org.keycloak.testsuite.updaters.ClientAttributeUpdater;
 import org.keycloak.testsuite.util.SamlClientBuilder;
 
+import jakarta.ws.rs.core.Response;
+import jakarta.xml.soap.MessageFactory;
+import jakarta.xml.soap.SOAPMessage;
+
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.Matchers.nullValue;
+import static org.keycloak.testsuite.util.Matchers.isSamlResponse;
+import static org.keycloak.testsuite.util.Matchers.statusCodeIsHC;
 import static org.keycloak.testsuite.util.SamlClient.Binding.POST;
 import static org.keycloak.testsuite.util.SamlClient.Binding.SOAP;
 
@@ -123,12 +137,13 @@ public class SOAPBindingTest extends AbstractSamlTest {
                 .processSamlResponse(POST)
                 .transformObject(this::extractNameIdAndSessionIndexAndTerminate)
                 .build()
+                .clearCookies()
                 .logoutRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SOAP)
                     .nameId(nameIdRef::get)
                     .sessionIndex(sessionIndexRef::get)
                     .signWith(SAML_CLIENT_SALES_POST_SIG_PRIVATE_KEY, SAML_CLIENT_SALES_POST_SIG_PUBLIC_KEY)
                 .build()
-                .executeAndTransform(POST::extractResponse);
+                .executeAndTransform(SOAP::extractResponse);
 
 
         assertThat(response.getSamlObject(), instanceOf(StatusResponseType.class));
@@ -150,11 +165,12 @@ public class SOAPBindingTest extends AbstractSamlTest {
                 .processSamlResponse(POST)
                     .transformObject(this::extractNameIdAndSessionIndexAndTerminate)
                 .build()
+                .clearCookies()
                 .logoutRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SOAP)
                     .nameId(nameIdRef::get)
                     .sessionIndex(sessionIndexRef::get)
                 .build()
-                .executeAndTransform(POST::extractResponse);
+                .executeAndTransform(SOAP::extractResponse);
 
 
         assertThat(response.getSamlObject(), instanceOf(StatusResponseType.class));
@@ -170,6 +186,7 @@ public class SOAPBindingTest extends AbstractSamlTest {
                 .processSamlResponse(POST)
                     .transformObject(this::extractNameIdAndSessionIndexAndTerminate)
                 .build()
+                .clearCookies()
                 .logoutRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SOAP)
                     .nameId(nameIdRef::get)
                     .sessionIndex(sessionIndexRef::get)
@@ -179,7 +196,7 @@ public class SOAPBindingTest extends AbstractSamlTest {
                         return logoutRequestType;
                     })
                 .build()
-                .executeAndTransform(POST::extractResponse);
+                .executeAndTransform(SOAP::extractResponse);
 
 
         assertThat(response.getSamlObject(), instanceOf(StatusResponseType.class));
@@ -201,6 +218,7 @@ public class SOAPBindingTest extends AbstractSamlTest {
                 .processSamlResponse(POST)
                 .transformObject(this::extractNameIdAndSessionIndexAndTerminate)
                 .build()
+                .clearCookies()
                 .logoutRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SOAP)
                 .nameId(nameIdRef::get)
                 .sessionIndex(sessionIndexRef::get)
@@ -209,9 +227,69 @@ public class SOAPBindingTest extends AbstractSamlTest {
                     return logoutRequestType;
                 })
                 .build()
-                .executeAndTransform(POST::extractResponse);
+                .executeAndTransform(SOAP::extractResponse);
 
 
         assertThat(response.getSamlObject(), instanceOf(StatusResponseType.class));
+    }
+
+    @Test
+    public void soapBindingIsNotPossibleForClientsWithSamlEcpFlowAttributeFalse() {
+        // Disable ECP_FLOW_ENABLED switch
+        getCleanup().addCleanup(ClientAttributeUpdater.forClient(adminClient, REALM_NAME, SAML_CLIENT_ID_ECP_SP)
+                .setAttribute(SamlConfigAttributes.SAML_ALLOW_ECP_FLOW, "false")
+                .setAttribute(SamlConfigAttributes.SAML_SERVER_SIGNATURE, "false")
+                .setAttribute(SamlConfigAttributes.SAML_CLIENT_SIGNATURE_ATTRIBUTE, "false")
+                .update());
+
+        new SamlClientBuilder()
+                .authnRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SAML_ASSERTION_CONSUMER_URL_ECP_SP, SOAP)
+                .basicAuthentication(bburkeUser)
+                .build()
+                .execute(response -> {
+                    assertThat(response, statusCodeIsHC(Response.Status.INTERNAL_SERVER_ERROR));
+
+                    try {
+                        MessageFactory messageFactory = MessageFactory.newInstance();
+                        SOAPMessage soapMessage = messageFactory.createMessage(null, response.getEntity().getContent());
+                        String faultDetail = soapMessage.getSOAPBody().getFault().getDetail().getValue();
+                        assertThat(faultDetail, is(equalTo("Client is not allowed to use ECP profile.")));
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+
+    }
+
+    @Test
+    public void ecpFlowCreatesTransientSessions() {
+        // Disable ECP_FLOW_ENABLED switch
+        getCleanup().addCleanup(ClientAttributeUpdater.forClient(adminClient, REALM_NAME, SAML_CLIENT_ID_ECP_SP)
+                .setAttribute(SamlConfigAttributes.SAML_SERVER_SIGNATURE, "false")
+                .setAttribute(SamlConfigAttributes.SAML_CLIENT_SIGNATURE_ATTRIBUTE, "false")
+                .update());
+
+        // Successfully login using ECP flow
+        SAML2Object samlObject = new SamlClientBuilder()
+                .authnRequest(getAuthServerSamlEndpoint(REALM_NAME), SAML_CLIENT_ID_ECP_SP, SAML_ASSERTION_CONSUMER_URL_ECP_SP, SOAP)
+                .basicAuthentication(bburkeUser)
+                .build()
+                .executeAndTransform(SOAP::extractResponse).getSamlObject();
+
+        assertThat(samlObject, isSamlResponse(JBossSAMLURIConstants.STATUS_SUCCESS));
+        ResponseType loginResp1 = (ResponseType) samlObject;
+        AuthnStatementType sessionId = (AuthnStatementType) loginResp1.getAssertions().get(0).getAssertion().getStatements().iterator().next();
+
+        String userSessionId = sessionId.getSessionIndex().split("::")[0];
+
+        // Test that the user session with the given ID does not exist
+        testingClient.server().run(session -> {
+            RealmModel realmByName = session.realms().getRealmByName(REALM_NAME);
+            UserSessionModel userSession = session.sessions().getUserSession(realmByName, userSessionId);
+
+            assertThat(userSession, nullValue());
+        });
+
+
     }
 }

@@ -29,6 +29,7 @@ import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.admin.client.resource.AuthenticationManagementResource;
+import org.keycloak.admin.client.resource.UserProfileResource;
 import org.keycloak.authentication.AuthenticationFlow;
 import org.keycloak.authentication.authenticators.x509.ValidateX509CertificateUsernameFactory;
 import org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel;
@@ -45,11 +46,13 @@ import org.keycloak.representations.idm.AuthenticatorConfigRepresentation;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.representations.userprofile.config.UPAttribute;
+import org.keycloak.representations.userprofile.config.UPAttributePermissions;
+import org.keycloak.representations.userprofile.config.UPConfig;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.arquillian.AuthServerTestEnricher;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
 import org.keycloak.testsuite.pages.AbstractPage;
 import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.LoginPage;
@@ -62,17 +65,22 @@ import org.keycloak.testsuite.util.DroneUtils;
 import org.keycloak.testsuite.util.PhantomJSBrowser;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
+import org.keycloak.userprofile.UserProfileConstants;
 import org.openqa.selenium.WebDriver;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 import java.lang.reflect.Field;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import static org.hamcrest.Matchers.emptyOrNullString;
+import static org.hamcrest.Matchers.is;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.IdentityMapperType.USERNAME_EMAIL;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.IdentityMapperType.USER_ATTRIBUTE;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.ISSUERDN;
@@ -82,20 +90,19 @@ import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorC
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SUBJECTDN_CN;
 import static org.keycloak.authentication.authenticators.x509.X509AuthenticatorConfigModel.MappingSourceType.SUBJECTDN_EMAIL;
 import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SSL_REQUIRED;
-import static org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer.REMOTE;
 
 /**
  * @author <a href="mailto:brat000012001@gmail.com">Peter Nalyvayko</a>
  * @version $Revision: 1 $
  * @since 10/28/2016
  */
-@AuthServerContainerExclude(REMOTE)
 public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKeycloakTest {
 
     public static final String EMPTY_CRL_PATH = "empty.crl";
     public static final String INTERMEDIATE_CA_CRL_PATH = "intermediate-ca.crl";
     public static final String INTERMEDIATE_CA_INVALID_SIGNATURE_CRL_PATH = "intermediate-ca-invalid-signature.crl";
     public static final String INTERMEDIATE_CA_3_CRL_PATH = "intermediate-ca-3.crl";
+    public static final String INVALID_CRL_PATH = "invalid.crl";
     protected final Logger log = Logger.getLogger(this.getClass());
 
     static final String REQUIRED = "REQUIRED";
@@ -109,6 +116,8 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
     protected String userId;
 
     protected String userId2;
+
+    protected String realmId;
 
     protected AuthenticationManagementResource authMgmtResource;
 
@@ -205,8 +214,32 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
     }
 
     @Before
-    public void configureFlows() {
+    public void onBefore() {
+        configureUserProfile();
+        configureFlows();
+    }
+
+    private void configureUserProfile() {
+        UserProfileResource userProfileResource = testRealm().users().userProfile();
+        UPConfig config = userProfileResource.getConfiguration();
+        config.addOrReplaceAttribute(createUpAttribute("x509_certificate_identity"));
+        config.addOrReplaceAttribute(createUpAttribute("alternative_email"));
+        config.addOrReplaceAttribute(createUpAttribute("upn"));
+        config.addOrReplaceAttribute(createUpAttribute("x509_certificate_serialnumber"));
+        config.addOrReplaceAttribute(createUpAttribute("x509_issuer_dn"));
+        config.addOrReplaceAttribute(createUpAttribute("x509_cert_sha256thumbprint"));
+        config.addOrReplaceAttribute(createUpAttribute("x509_serial_number"));
+        userProfileResource.update(config);
+        assertAdminEvents.clear();
+    }
+
+    private UPAttribute createUpAttribute(String name) {
+        return new UPAttribute(name, new UPAttributePermissions(Collections.emptySet(), Set.of(UserProfileConstants.ROLE_USER, UserProfileConstants.ROLE_ADMIN)));
+    }
+
+    private void configureFlows() {
         authMgmtResource = adminClient.realms().realm(REALM_NAME).flows();
+        this.realmId = adminClient.realm(REALM_NAME).toRepresentation().getId();
 
         AuthenticationFlowRepresentation browserFlow = copyBrowserFlow();
         Assert.assertNotNull(browserFlow);
@@ -290,14 +323,12 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
 
         UserRepresentation user = UserBuilder.create()
                 .id(KeycloakModelUtils.generateId())
-                .username("Keycloak")
+                .username("keycloak")
                 .email("localhost@localhost")
                 .enabled(true)
                 .password("password")
                 .addAttribute("x509_issuer_identity", "Keycloak Intermediate CA")
                 .build();
-
-        userId2 = user.getId();
 
         ClientRepresentation client = findTestApp(testRealm);
         URI baseUri = URI.create(client.getRedirectUris().get(0));
@@ -312,6 +343,12 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
                 .client(app);
     }
 
+    @Override
+    public void importTestRealms() {
+        super.importTestRealms();
+        userId2 = adminClient.realm("test").users().search("keycloak", true).get(0).getId();
+    }
+
     AuthenticationFlowRepresentation createFlow(AuthenticationFlowRepresentation flowRep) {
         Response response = authMgmtResource.createFlow(flowRep);
         try {
@@ -320,7 +357,7 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
         finally {
             response.close();
         }
-        assertAdminEvents.assertEvent(REALM_NAME, OperationType.CREATE, AssertAdminEvents.isExpectedPrefixFollowedByUuid(AdminEventPaths.authFlowsPath()), flowRep, ResourceType.AUTH_FLOW);
+        assertAdminEvents.assertEvent(realmId, OperationType.CREATE, AssertAdminEvents.isExpectedPrefixFollowedByUuid(AdminEventPaths.authFlowsPath()), flowRep, ResourceType.AUTH_FLOW);
 
         for (AuthenticationFlowRepresentation flow : authMgmtResource.getFlows()) {
             if (flow.getAlias().equalsIgnoreCase(flowRep.getAlias())) {
@@ -335,7 +372,7 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
         HashMap<String, String> params = new HashMap<>();
         params.put("newName", newFlow);
         Response response = authMgmtResource.copy(existingFlow, params);
-        assertAdminEvents.assertEvent(REALM_NAME, OperationType.CREATE, Encode.decode(AdminEventPaths.authCopyFlowPath(existingFlow)), params, ResourceType.AUTH_FLOW);
+        assertAdminEvents.assertEvent(realmId, OperationType.CREATE, Encode.decode(AdminEventPaths.authCopyFlowPath(existingFlow)), params, ResourceType.AUTH_FLOW);
         try {
             Assert.assertEquals("Copy flow", 201, response.getStatus());
         } finally {
@@ -548,7 +585,7 @@ public abstract class AbstractX509AuthenticationTest extends AbstractTestRealmKe
 
     protected AssertEvents.ExpectedEvent addX509CertificateDetails(AssertEvents.ExpectedEvent expectedEvent) {
         return expectedEvent
-                .detail(Details.X509_CERTIFICATE_SERIAL_NUMBER, Matchers.not(Matchers.isEmptyOrNullString()))
+                .detail(Details.X509_CERTIFICATE_SERIAL_NUMBER, Matchers.not(is(emptyOrNullString())))
                 .detail(Details.X509_CERTIFICATE_SUBJECT_DISTINGUISHED_NAME, Matchers.startsWith("EMAILADDRESS=test-user@localhost"))
                 .detail(Details.X509_CERTIFICATE_ISSUER_DISTINGUISHED_NAME, Matchers.startsWith("EMAILADDRESS=contact@keycloak.org"));
     }

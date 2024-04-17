@@ -20,7 +20,7 @@
 
       <feature name="keycloak-fuse-7.0-example" version="${project.version}">
           <details>The Keycloak / Fuse 7.0 on Undertow example</details>
-          <feature>pax-http-undertow</feature>
+          <feature>pax-web-http-undertow</feature>
           <feature>war</feature>
           <feature>camel</feature>
           <feature>camel-undertow</feature>
@@ -28,8 +28,8 @@
           <feature>keycloak</feature>
           <feature>keycloak-pax-http-undertow</feature>
 
-          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-base/${jackson.version}</bundle>
-          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-json-provider/${jackson.version}</bundle>
+          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-base/2.12.1</bundle>
+          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-json-provider/2.12.1</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-camel-endpoint-fuse7-undertow/${project.version}</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-cxf-jaxrs-fuse7-undertow/${project.version}</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-cxf-jaxws-fuse7-undertow/${project.version}</bundle>
@@ -46,8 +46,8 @@
           <feature>cxf</feature>
           <feature>keycloak</feature>
           <feature>keycloak-jetty9-adapter</feature>
-          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-base/${jackson.version}</bundle>
-          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-json-provider/${jackson.version}</bundle>
+          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-base/2.12.1</bundle>
+          <bundle dependency="true">mvn:com.fasterxml.jackson.jaxrs/jackson-jaxrs-json-provider/2.12.1</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-product-portal/${project.version}</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-customer-portal/${project.version}/war</bundle>
           <bundle>mvn:org.keycloak.testsuite/fuse-example-external-config/${project.version}/war</bundle>

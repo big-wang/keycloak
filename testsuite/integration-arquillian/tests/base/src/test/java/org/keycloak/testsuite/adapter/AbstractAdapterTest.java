@@ -24,13 +24,14 @@ import org.jboss.shrinkwrap.api.asset.StringAsset;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.AfterClass;
 import org.junit.Before;
+import org.keycloak.admin.client.resource.UserProfileResource;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractAuthTest;
 import org.keycloak.testsuite.adapter.page.AppServerContextRoot;
 import org.keycloak.testsuite.arquillian.SuiteContext;
 import org.keycloak.testsuite.arquillian.annotation.AppServerContainer;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
+import org.keycloak.testsuite.forms.VerifyProfileTest;
 import org.keycloak.testsuite.util.ServerURLs;
 
 import java.io.IOException;
@@ -44,7 +45,6 @@ import static org.keycloak.testsuite.arquillian.AppServerTestEnricher.CURRENT_AP
 import static org.keycloak.testsuite.arquillian.AppServerTestEnricher.enableHTTPSForAppServer;
 import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_PORT;
 import static org.keycloak.testsuite.util.ServerURLs.AUTH_SERVER_SSL_REQUIRED;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 
 /**
  * <code>@AppServerContainer</code> is needed for stopping recursion in 
@@ -53,7 +53,6 @@ import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.A
  * @author tkyjovsk
  */
 @AppServerContainer("")
-@AuthServerContainerExclude(AuthServer.REMOTE)
 public abstract class AbstractAdapterTest extends AbstractAuthTest {
 
     @Page
@@ -120,6 +119,14 @@ public abstract class AbstractAdapterTest extends AbstractAuthTest {
             if (AUTH_SERVER_SSL_REQUIRED) {
                 tr.setSslRequired("all");
             }
+        }
+    }
+
+    @Before
+    public void enableUnmanagedAttributes() {
+        for (RealmRepresentation realm : adminClient.realms().findAll()) {
+            UserProfileResource upResource = adminClient.realm(realm.getRealm()).users().userProfile();
+            VerifyProfileTest.enableUnmanagedAttributes(upResource);
         }
     }
 

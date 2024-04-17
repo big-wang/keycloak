@@ -17,6 +17,11 @@
 
 package org.keycloak.quarkus.runtime;
 
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.jboss.logging.Logger;
+
 import picocli.CommandLine;
 
 public final class Messages {
@@ -25,21 +30,13 @@ public final class Messages {
 
     }
 
-    public static IllegalArgumentException invalidDatabaseVendor(String db, String... availableOptions) {
-        return new IllegalArgumentException("Invalid database vendor [" + db + "]. Possible values are: " + String.join(", ", availableOptions) + ".");
-    }
-
-    public static IllegalArgumentException invalidProxyMode(String mode) {
-        return new IllegalArgumentException("Invalid value [" + mode + "] for configuration property [proxy].");
-    }
-
-    public static IllegalStateException httpsConfigurationNotSet() {
+    public static String httpsConfigurationNotSet() {
         StringBuilder builder = new StringBuilder("Key material not provided to setup HTTPS. Please configure your keys/certificates");
         if (!Environment.DEV_PROFILE_VALUE.equals(Environment.getProfile())) {
             builder.append(" or start the server in development mode");
         }
         builder.append(".");
-        return new IllegalStateException(builder.toString());
+        return builder.toString();
     }
 
     public static void cliExecutionError(CommandLine cmd, String message, Throwable cause) {
@@ -47,6 +44,16 @@ public final class Messages {
     }
 
     public static String devProfileNotAllowedError(String cmd) {
-        return String.format("You can not '%s' the server using the '%s' configuration profile. Please re-build the server first, using 'kc.sh build' for the default production profile, or using 'kc.sh build --profile=<profile>' with a profile more suitable for production.%n", cmd, Environment.DEV_PROFILE_VALUE);
+        return String.format("You can not '%s' the server in %s mode. Please re-build the server first, using 'kc.sh build' for the default production mode.%n", cmd, Environment.getKeycloakModeFromProfile(Environment.DEV_PROFILE_VALUE));
     }
+
+    public static String invalidLogLevel(String logLevel) {
+        Set<String> values = Arrays.stream(Logger.Level.values()).map(Logger.Level::name).map(String::toLowerCase).collect(Collectors.toSet());
+        return "Invalid log level: " + logLevel + ". Possible values are: " + String.join(", ", values) + ".";
+    }
+
+    public static String invalidLogCategoryFormat(String category) {
+        return "Invalid log category format: " + category + ". The format is 'category:level' such as 'org.keycloak:debug'.";
+    }
+
 }

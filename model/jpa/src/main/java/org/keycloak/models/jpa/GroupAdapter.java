@@ -20,6 +20,7 @@ package org.keycloak.models.jpa;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.GroupModel;
+import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.jpa.entities.GroupAttributeEntity;
@@ -28,29 +29,32 @@ import org.keycloak.models.jpa.entities.GroupRoleMappingEntity;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.RoleUtils;
 
-import javax.persistence.EntityManager;
-import javax.persistence.TypedQuery;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.TypedQuery;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
-import javax.persistence.LockModeType;
+import jakarta.persistence.LockModeType;
 
+import static org.keycloak.models.jpa.PaginationUtils.paginateQuery;
 import static org.keycloak.utils.StreamsUtil.closing;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class GroupAdapter implements GroupModel.Streams , JpaModel<GroupEntity> {
+public class GroupAdapter implements GroupModel , JpaModel<GroupEntity> {
 
+    protected final KeycloakSession session;
     protected GroupEntity group;
     protected EntityManager em;
     protected RealmModel realm;
 
-    public GroupAdapter(RealmModel realm, EntityManager em, GroupEntity group) {
+    public GroupAdapter(KeycloakSession session, RealmModel realm, EntityManager em, GroupEntity group) {
+        this.session = session;
         this.em = em;
         this.group = group;
         this.realm = realm;
@@ -121,9 +125,35 @@ public class GroupAdapter implements GroupModel.Streams , JpaModel<GroupEntity> 
 
     @Override
     public Stream<GroupModel> getSubGroupsStream() {
-        TypedQuery<String> query = em.createNamedQuery("getGroupIdsByParent", String.class);
-        query.setParameter("parent", group.getId());
-        return closing(query.getResultStream().map(realm::getGroupById).filter(Objects::nonNull));
+        return getSubGroupsStream("", false, -1, -1);
+    }
+
+    @Override
+    public Stream<GroupModel> getSubGroupsStream(String search, Boolean exact, Integer firstResult, Integer maxResults) {
+        TypedQuery<String> query;
+        if (Boolean.TRUE.equals(exact)) {
+            query = em.createNamedQuery("getGroupIdsByParentAndName", String.class);
+        } else {
+            query = em.createNamedQuery("getGroupIdsByParentAndNameContaining", String.class);
+        }
+        query.setParameter("realm", realm.getId())
+                .setParameter("parent", group.getId())
+                .setParameter("search", search == null ? "" : search);
+
+        return closing(paginateQuery(query, firstResult, maxResults).getResultStream()
+                .map(realm::getGroupById)
+                // In concurrent tests, the group might be deleted in another thread, therefore, skip those null values.
+                .filter(Objects::nonNull)
+                .sorted(GroupModel.COMPARE_BY_NAME)
+        );
+    }
+
+    @Override
+    public Long getSubGroupsCount() {
+        return em.createNamedQuery("getGroupCountByParent", Long.class)
+                .setParameter("realm", realm.getId())
+                .setParameter("parent", group.getId())
+                .getSingleResult();
     }
 
     @Override
@@ -214,7 +244,9 @@ public class GroupAdapter implements GroupModel.Streams , JpaModel<GroupEntity> 
 
     @Override
     public boolean hasRole(RoleModel role) {
-        return RoleUtils.hasRole(getRoleMappingsStream(), role);
+        if (RoleUtils.hasRole(getRoleMappingsStream(), role)) return true;
+        GroupModel parent = getParent();
+        return parent != null && parent.hasRole(role);
     }
 
     protected TypedQuery<GroupRoleMappingEntity> getGroupRoleMappingEntityTypedQuery(RoleModel role) {
@@ -283,6 +315,8 @@ public class GroupAdapter implements GroupModel.Streams , JpaModel<GroupEntity> 
         return getId().hashCode();
     }
 
-
-
+    @Override
+    public boolean escapeSlashesInGroupPath() {
+        return KeycloakModelUtils.escapeSlashesInGroupPath(session);
+    }
 }

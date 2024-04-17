@@ -21,22 +21,22 @@ import static org.keycloak.models.utils.ModelToRepresentation.toRepresentation;
 
 import java.util.HashMap;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriInfo;
 
-import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.eclipse.microprofile.openapi.annotations.extensions.Extension;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
-import org.keycloak.exportimport.util.ExportUtils;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.UserModel;
@@ -48,6 +48,7 @@ import org.keycloak.representations.idm.authorization.PolicyRepresentation;
 import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceServerRepresentation;
+import org.keycloak.services.resources.KeycloakOpenAPI;
 import org.keycloak.services.resources.admin.AdminEventBuilder;
 import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
 
@@ -56,6 +57,7 @@ import java.util.Collections;
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
+@Extension(name = KeycloakOpenAPI.Profiles.ADMIN, value = "")
 public class ResourceServerService {
 
     private final AuthorizationProvider authorization;
@@ -86,95 +88,83 @@ public class ResourceServerService {
         if (this.resourceServer == null) {
             this.resourceServer = RepresentationToModel.createResourceServer(client, session, true);
             createDefaultPermission(createDefaultResource(), createDefaultPolicy());
-            audit(OperationType.CREATE, session.getContext().getUri(), newClient);
+            audit(ModelToRepresentation.toRepresentation(resourceServer, client), OperationType.CREATE, session.getContext().getUri(), newClient);
         }
 
         return resourceServer;
     }
 
     @PUT
-    @Consumes("application/json")
-    @Produces("application/json")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @APIResponse(responseCode = "204", description = "No Content")
     public Response update(ResourceServerRepresentation server) {
         this.auth.realm().requireManageAuthorization();
         this.resourceServer.setAllowRemoteResourceManagement(server.isAllowRemoteResourceManagement());
         this.resourceServer.setPolicyEnforcementMode(server.getPolicyEnforcementMode());
         this.resourceServer.setDecisionStrategy(server.getDecisionStrategy());
-        audit(OperationType.UPDATE, session.getContext().getUri(), false);
+        audit(ModelToRepresentation.toRepresentation(resourceServer, client), OperationType.UPDATE, session.getContext().getUri(), false);
         return Response.noContent().build();
     }
 
     public void delete() {
         this.auth.realm().requireManageAuthorization();
-        authorization.getStoreFactory().getResourceServerStore().delete(resourceServer.getId());
-        audit(OperationType.DELETE, session.getContext().getUri(), false);
+        //need to create representation before the object is deleted to be able to get lazy loaded fields
+        ResourceServerRepresentation rep = ModelToRepresentation.toRepresentation(resourceServer, client);
+        authorization.getStoreFactory().getResourceServerStore().delete(client);
+        audit(rep, OperationType.DELETE, session.getContext().getUri(), false);
     }
 
     @GET
-    @Produces("application/json")
-    public Response findById() {
+    @Produces(MediaType.APPLICATION_JSON)
+    public ResourceServerRepresentation findById() {
         this.auth.realm().requireViewAuthorization();
-        return Response.ok(toRepresentation(this.resourceServer, this.client)).build();
+        return toRepresentation(this.resourceServer, this.client);
     }
 
     @Path("/settings")
     @GET
-    @Produces("application/json")
-    public Response exportSettings() {
+    @Produces(MediaType.APPLICATION_JSON)
+    public ResourceServerRepresentation exportSettings() {
         this.auth.realm().requireManageAuthorization();
-        return Response.ok(ExportUtils.exportAuthorizationSettings(session, client)).build();
+        return ModelToRepresentation.toResourceServerRepresentation(session, client);
     }
 
     @Path("/import")
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
+    @APIResponse(responseCode = "204", description = "No Content")
     public Response importSettings(ResourceServerRepresentation rep) {
         this.auth.realm().requireManageAuthorization();
 
         rep.setClientId(client.getId());
 
-        RepresentationToModel.toModel(rep, authorization);
+        resourceServer = RepresentationToModel.toModel(rep, authorization, client);
 
-        audit(OperationType.UPDATE, session.getContext().getUri(), false);
+        audit(ModelToRepresentation.toRepresentation(resourceServer, client), OperationType.UPDATE, session.getContext().getUri(), false);
 
         return Response.noContent().build();
     }
 
     @Path("/resource")
     public ResourceSetService getResourceSetResource() {
-        ResourceSetService resource = new ResourceSetService(this.session, this.resourceServer, this.authorization, this.auth, adminEvent);
-
-        ResteasyProviderFactory.getInstance().injectProperties(resource);
-
-        return resource;
+        return new ResourceSetService(this.session, this.resourceServer, this.authorization, this.auth, adminEvent);
     }
 
     @Path("/scope")
     public ScopeService getScopeResource() {
-        ScopeService resource = new ScopeService(this.session, this.resourceServer, this.authorization, this.auth, adminEvent);
-
-        ResteasyProviderFactory.getInstance().injectProperties(resource);
-
-        return resource;
+        return new ScopeService(this.session, this.resourceServer, this.authorization, this.auth, adminEvent);
     }
 
     @Path("/policy")
     public PolicyService getPolicyResource() {
-        PolicyService resource = new PolicyService(this.resourceServer, this.authorization, this.auth, adminEvent);
-
-        ResteasyProviderFactory.getInstance().injectProperties(resource);
-
-        return resource;
+        return new PolicyService(this.resourceServer, this.authorization, this.auth, adminEvent);
     }
 
     @Path("/permission")
-    public Object getPermissionTypeResource() {
+    public PermissionService getPermissionTypeResource() {
         this.auth.realm().requireViewAuthorization();
-        PermissionService resource = new PermissionService(this.resourceServer, this.authorization, this.auth, adminEvent);
-
-        ResteasyProviderFactory.getInstance().injectProperties(resource);
-
-        return resource;
+        return new PermissionService(this.resourceServer, this.authorization, this.auth, adminEvent);
     }
 
     private void createDefaultPermission(ResourceRepresentation resource, PolicyRepresentation policy) {
@@ -224,13 +214,13 @@ public class ResourceServerService {
         return defaultResource;
     }
 
-    private void audit(OperationType operation, UriInfo uriInfo, boolean newClient) {
+    private void audit(ResourceServerRepresentation rep, OperationType operation, UriInfo uriInfo, boolean newClient) {
         if (newClient) {
             adminEvent.resource(ResourceType.AUTHORIZATION_RESOURCE_SERVER).operation(operation).resourcePath(uriInfo, client.getId())
-                    .representation(ModelToRepresentation.toRepresentation(resourceServer, client)).success();
+                    .representation(rep).success();
         } else {
             adminEvent.resource(ResourceType.AUTHORIZATION_RESOURCE_SERVER).operation(operation).resourcePath(uriInfo)
-                    .representation(ModelToRepresentation.toRepresentation(resourceServer, client)).success();
+                    .representation(rep).success();
         }
     }
 }

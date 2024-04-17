@@ -28,6 +28,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.commons.marshall.SerializeWith;
+import org.keycloak.models.ClientModel;
+import org.keycloak.models.RealmModel;
+import org.keycloak.models.sessions.infinispan.entities.AuthenticatedClientSessionEntity;
 import org.keycloak.models.sessions.infinispan.entities.SessionEntity;
 import java.util.HashMap;
 import org.jboss.logging.Logger;
@@ -96,6 +99,16 @@ public class SessionEntityWrapper<S extends SessionEntity> {
         return entity;
     }
 
+    public ClientModel getClientIfNeeded(RealmModel realm) {
+        if (entity instanceof AuthenticatedClientSessionEntity) {
+            String clientId = ((AuthenticatedClientSessionEntity) entity).getClientId();
+            if (clientId != null) {
+                return realm.getClientById(clientId);
+            }
+        }
+        return null;
+    }
+
     public String getLocalMetadataNote(String key) {
         if (isForTransport()) {
             throw new IllegalStateException("This entity is only intended for transport");
@@ -112,7 +125,7 @@ public class SessionEntityWrapper<S extends SessionEntity> {
 
     public Integer getLocalMetadataNoteInt(String key) {
         String note = getLocalMetadataNote(key);
-        return note==null ? null : Integer.parseInt(note);
+        return note==null ? null : Integer.valueOf(note);
     }
 
     public void putLocalMetadataNoteInt(String key, int value) {
@@ -191,7 +204,7 @@ public class SessionEntityWrapper<S extends SessionEntity> {
                 return res;
             } else {
                 UUID sessionVersion = new UUID(input.readLong(), input.readLong());
-                HashMap<String, String> map = MarshallUtil.unmarshallMap(input, HashMap::new);
+                HashMap<String, String> map = MarshallUtil.<String, String, HashMap<String, String>>unmarshallMap(input, HashMap::new);
                 final SessionEntity entity = (SessionEntity) input.readObject();
                 if (log.isTraceEnabled()) {
                     log.tracef("Found entity locally: entity=%s, version=%s, metadata=%s", entity, sessionVersion, map);

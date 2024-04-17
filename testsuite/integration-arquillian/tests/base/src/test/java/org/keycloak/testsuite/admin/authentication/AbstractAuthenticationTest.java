@@ -35,7 +35,7 @@ import org.keycloak.testsuite.util.AdminEventPaths;
 import org.keycloak.testsuite.util.AssertAdminEvents;
 import org.keycloak.testsuite.util.RealmBuilder;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,6 +55,7 @@ public abstract class AbstractAuthenticationTest extends AbstractKeycloakTest {
 
     RealmResource realmResource;
     AuthenticationManagementResource authMgmtResource;
+    protected String testRealmId;
 
     @Rule
     public AssertAdminEvents assertAdminEvents = new AssertAdminEvents(this);
@@ -63,6 +64,7 @@ public abstract class AbstractAuthenticationTest extends AbstractKeycloakTest {
     public void before() {
         realmResource = adminClient.realms().realm(REALM_NAME);
         authMgmtResource = realmResource.flows();
+        testRealmId = realmResource.toRepresentation().getId();
     }
 
     @Override
@@ -108,7 +110,7 @@ public abstract class AbstractAuthenticationTest extends AbstractKeycloakTest {
         Assert.assertEquals("Execution authenticator - " + actual.getAuthenticator(), expected.getAuthenticator(), actual.getAuthenticator());
         Assert.assertEquals("Execution userSetupAllowed - " + actual.getAuthenticator(), expected.isUserSetupAllowed(), actual.isUserSetupAllowed());
         Assert.assertEquals("Execution authenticatorFlow - " + actual.getAuthenticator(), expected.isAuthenticatorFlow(), actual.isAuthenticatorFlow());
-        Assert.assertEquals("Execution authenticatorConfig - " + actual.getAuthenticator(), expected.getAuthenticatorConfig(), actual.getAuthenticatorConfig());
+        Assert.assertEquals("Execution authenticatorConfig - " + actual.getAuthenticatorConfig(), expected.getAuthenticatorConfig(), actual.getAuthenticatorConfig());
         Assert.assertEquals("Execution priority - " + actual.getAuthenticator(), expected.getPriority(), actual.getPriority());
         Assert.assertEquals("Execution requirement - " + actual.getAuthenticator(), expected.getRequirement(), actual.getRequirement());
     }
@@ -199,6 +201,6 @@ public abstract class AbstractAuthenticationTest extends AbstractKeycloakTest {
         response.close();
         String flowId = ApiUtil.getCreatedId(response);
         getCleanup().addAuthenticationFlowId(flowId);
-        assertAdminEvents.assertEvent(REALM_NAME, OperationType.CREATE, AssertAdminEvents.isExpectedPrefixFollowedByUuid(AdminEventPaths.authFlowsPath()), flowRep, ResourceType.AUTH_FLOW);
+        assertAdminEvents.assertEvent(testRealmId, OperationType.CREATE, AssertAdminEvents.isExpectedPrefixFollowedByUuid(AdminEventPaths.authFlowsPath()), flowRep, ResourceType.AUTH_FLOW);
     }
 }

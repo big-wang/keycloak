@@ -1,7 +1,11 @@
 package org.keycloak.testsuite.util.javascript;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+
+import org.keycloak.util.JsonSerialization;
 
 /**
  * @author mhajas
@@ -99,8 +103,14 @@ public class JSObjectBuilder {
         return this;
     }
 
+    public JSObjectBuilder acrValues(String value) {
+        Objects.requireNonNull(value, "value");
+        arguments.put("acrValues", value);
+        return this;
+    }
+
     private boolean skipQuotes(Object o) {
-        return (o instanceof Integer || o instanceof Boolean);
+        return (o instanceof Integer || o instanceof Boolean || o instanceof JSObjectBuilder);
     }
 
     public String build() {
@@ -111,11 +121,19 @@ public class JSObjectBuilder {
                     .append(option.getKey())
                     .append(" : ");
 
-            if (!skipQuotes(option.getValue())) argument.append("\"");
+            if (option.getValue().getClass().isArray()) {
+                try {
+                    argument.append(JsonSerialization.writeValueAsString(option.getValue()));
+                } catch (IOException ioe) {
+                    throw new IllegalArgumentException("Not possible to serialize value of the option " + option.getKey(), ioe);
+                }
+            } else {
+                if (!skipQuotes(option.getValue())) argument.append("\"");
 
-            argument.append(option.getValue());
+                argument.append(option.getValue());
 
-            if (!skipQuotes(option.getValue())) argument.append("\"");
+                if (!skipQuotes(option.getValue())) argument.append("\"");
+            }
             comma = ",";
         }
 
@@ -124,5 +142,8 @@ public class JSObjectBuilder {
         return argument.toString();
     }
 
-
+    @Override
+    public String toString() {
+        return build();
+    }
 }

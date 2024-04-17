@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,8 @@ package org.keycloak.authorization.authorization;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -32,13 +34,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
-import javax.ws.rs.HttpMethod;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status;
+import jakarta.ws.rs.HttpMethod;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
 
 import org.jboss.logging.Logger;
-import org.jboss.resteasy.spi.HttpRequest;
+import org.keycloak.http.HttpRequest;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.common.DefaultEvaluationContext;
@@ -59,12 +61,14 @@ import org.keycloak.authorization.util.Tokens;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.common.constants.ServiceAccountConstants;
 import org.keycloak.common.util.Base64Url;
+import org.keycloak.common.util.PathMatcher;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventBuilder;
 import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientSessionContext;
+import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
@@ -87,9 +91,10 @@ import org.keycloak.representations.idm.authorization.PermissionTicketToken;
 import org.keycloak.services.CorsErrorResponseException;
 import org.keycloak.services.ErrorResponseException;
 import org.keycloak.services.Urls;
+import org.keycloak.services.cors.Cors;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.AuthenticationSessionManager;
-import org.keycloak.services.resources.Cors;
+import org.keycloak.services.managers.UserSessionManager;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.sessions.RootAuthenticationSessionModel;
 import org.keycloak.util.JsonSerialization;
@@ -224,7 +229,7 @@ public class AuthorizationTokenService {
 
             if (isGranted(ticket, request, permissions)) {
                 AuthorizationProvider authorization = request.getAuthorization();
-                ClientModel targetClient = authorization.getRealm().getClientById(resourceServer.getId());
+                ClientModel targetClient = authorization.getRealm().getClientById(resourceServer.getClientId());
                 Metadata metadata = request.getMetadata();
                 String responseMode = metadata != null ? metadata.getResponseMode() : null;
 
@@ -308,7 +313,7 @@ public class AuthorizationTokenService {
         if (accessToken.getSessionState() == null) {
             // Create temporary (request-scoped) transient session
             UserModel user = TokenManager.lookupUserFromStatelessToken(keycloakSession, realm, accessToken);
-            userSessionModel = sessions.createUserSession(KeycloakModelUtils.generateId(), realm, user, user.getUsername(), request.getClientConnection().getRemoteAddr(),
+            userSessionModel = new UserSessionManager(keycloakSession).createUserSession(KeycloakModelUtils.generateId(), realm, user, user.getUsername(), request.getClientConnection().getRemoteAddr(),
                     ServiceAccountConstants.CLIENT_AUTH, false, null, null, UserSessionModel.SessionPersistenceState.TRANSIENT);
         } else {
             userSessionModel = sessions.getUserSession(realm, accessToken.getSessionState());
@@ -360,7 +365,7 @@ public class AuthorizationTokenService {
 
         if (accessToken.getSessionState() == null) {
             // Skip generating refresh token for accessToken without sessionState claim. This is "stateless" accessToken not pointing to any real persistent userSession
-            rpt.setSessionState(null);
+            rpt.setSessionId(null);
         } else {
             if (OIDCAdvancedConfigWrapper.fromClientModel(client).isUseRefreshToken()) {
                 responseBuilder.generateRefreshToken();
@@ -438,7 +443,7 @@ public class AuthorizationTokenService {
             throw unknownServerIdException;
         }
 
-        ResourceServer resourceServer = resourceServerStore.findById(clientModel.getId());
+        ResourceServer resourceServer = resourceServerStore.findByClient(clientModel);
 
         if (resourceServer == null) {
             CorsErrorResponseException unsupportedPermissionsException = new CorsErrorResponseException(request.getCors(), OAuthErrorException.INVALID_REQUEST, "Client does not support permissions", Status.BAD_REQUEST);
@@ -494,15 +499,14 @@ public class AuthorizationTokenService {
             }
         }
 
-        resolvePreviousGrantedPermissions(ticket, request, resourceServer, permissionsToEvaluate, resourceStore, scopeStore, limit);
+        resolvePreviousGrantedPermissions(request, resourceServer, permissionsToEvaluate, resourceStore, scopeStore, limit);
 
         return permissionsToEvaluate.values();
     }
 
-    private void resolvePreviousGrantedPermissions(PermissionTicketToken ticket,
-            KeycloakAuthorizationRequest request, ResourceServer resourceServer,
-            Map<String, ResourcePermission> permissionsToEvaluate, ResourceStore resourceStore, ScopeStore scopeStore,
-            AtomicInteger limit) {
+    private void resolvePreviousGrantedPermissions(KeycloakAuthorizationRequest request, ResourceServer resourceServer,
+                                                   Map<String, ResourcePermission> permissionsToEvaluate, ResourceStore resourceStore, ScopeStore scopeStore,
+                                                   AtomicInteger limit) {
         AccessToken rpt = request.getRpt();
 
         if (rpt != null && rpt.isActive()) {
@@ -517,7 +521,7 @@ public class AuthorizationTokenService {
                             break;
                         }
 
-                        Resource resource = resourceStore.findById(grantedPermission.getResourceId(), ticket.getIssuedFor());
+                        Resource resource = resourceStore.findById(resourceServer, grantedPermission.getResourceId());
 
                         if (resource != null) {
                             ResourcePermission permission = permissionsToEvaluate.get(resource.getId());
@@ -541,7 +545,7 @@ public class AuthorizationTokenService {
                             }
 
                             for (String scopeName : grantedPermission.getScopes()) {
-                                Scope scope = scopeStore.findByName(scopeName, resourceServer.getId());
+                                Scope scope = scopeStore.findByName(resourceServer, scopeName);
 
                                 if (scope != null) {
                                     if (!permission.getScopes().contains(scope)) {
@@ -562,7 +566,7 @@ public class AuthorizationTokenService {
             Set<Scope> requestedScopesModel) {
         AtomicBoolean processed = new AtomicBoolean();
 
-        resourceStore.findByScope(requestedScopesModel.stream().map(Scope::getId).collect(Collectors.toList()), resourceServer.getId(), resource -> {
+        resourceStore.findByScopes(resourceServer, requestedScopesModel, resource -> {
             if (limit != null && limit.get() <= 0) {
                 return;
             }
@@ -601,7 +605,7 @@ public class AuthorizationTokenService {
         Resource resource;
 
         if (resourceId.indexOf('-') != -1) {
-            resource = resourceStore.findById(resourceId, resourceServer.getId());
+            resource = resourceStore.findById(resourceServer, resourceId);
         } else {
             resource = null;
         }
@@ -611,33 +615,33 @@ public class AuthorizationTokenService {
         } else if (resourceId.startsWith("resource-type:")) {
             // only resource types, no resource instances. resource types are owned by the resource server
             String resourceType = resourceId.substring("resource-type:".length());
-            resourceStore.findByType(resourceType, resourceServer.getId(), resourceServer.getId(),
+            resourceStore.findByType(resourceServer, resourceType, resourceServer.getClientId(),
                     resource1 -> addPermission(request, resourceServer, authorization, permissionsToEvaluate, limit, requestedScopesModel, resource1));
         } else if (resourceId.startsWith("resource-type-any:")) {
             // any resource with a given type
             String resourceType = resourceId.substring("resource-type-any:".length());
-            resourceStore.findByType(resourceType, null, resourceServer.getId(),
+            resourceStore.findByType(resourceServer, resourceType, null,
                     resource12 -> addPermission(request, resourceServer, authorization, permissionsToEvaluate, limit, requestedScopesModel, resource12));
         } else if (resourceId.startsWith("resource-type-instance:")) {
             // only resource instances with a given type
             String resourceType = resourceId.substring("resource-type-instance:".length());
-            resourceStore.findByTypeInstance(resourceType, resourceServer.getId(),
+            resourceStore.findByTypeInstance(resourceServer, resourceType,
                     resource13 -> addPermission(request, resourceServer, authorization, permissionsToEvaluate, limit, requestedScopesModel, resource13));
         } else if (resourceId.startsWith("resource-type-owner:")) {
             // only resources where the current identity is the owner
             String resourceType = resourceId.substring("resource-type-owner:".length());
-            resourceStore.findByType(resourceType, identity.getId(), resourceServer.getId(),
+            resourceStore.findByType(resourceServer, resourceType, identity.getId(),
                     resource14 -> addPermission(request, resourceServer, authorization, permissionsToEvaluate, limit, requestedScopesModel, resource14));
         } else {
-            Resource ownerResource = resourceStore.findByName(resourceId, identity.getId(), resourceServer.getId());
+            Resource ownerResource = resourceStore.findByName(resourceServer, resourceId, identity.getId());
 
             if (ownerResource != null) {
                 permission.setResourceId(ownerResource.getId());
                 addPermission(request, resourceServer, authorization, permissionsToEvaluate, limit, requestedScopesModel, ownerResource);
             }
 
-            if (!identity.isResourceServer() || !identity.getId().equals(resourceServer.getId())) {
-                List<PermissionTicket> tickets = storeFactory.getPermissionTicketStore().findGranted(resourceId, identity.getId(), resourceServer.getId());
+            if (!identity.isResourceServer() || !identity.getId().equals(resourceServer.getClientId())) {
+                List<PermissionTicket> tickets = storeFactory.getPermissionTicketStore().findGranted(resourceServer, resourceId, identity.getId());
 
                 if (!tickets.isEmpty()) {
                     List<Scope> scopes = new ArrayList<>();
@@ -652,12 +656,17 @@ public class AuthorizationTokenService {
                     ResourcePermission resourcePermission = addPermission(request, resourceServer, authorization,
                             permissionsToEvaluate, limit,
                             requestedScopesModel, grantedResource);
-                    
+                    if (resourcePermission != null) {
+                        Collection<Scope> permissionScopes = resourcePermission.getScopes();
+                        if (permissionScopes != null) {
+                            permissionScopes.retainAll(scopes);
+                        }
+                    }
                     // the permission is explicitly granted by the owner, mark this permission as granted so that we don't run the evaluation engine on it
                     resourcePermission.setGranted(true);
                 }
 
-                Resource serverResource = resourceStore.findByName(resourceId, resourceServer.getId());
+                Resource serverResource = resourceStore.findByName(resourceServer, resourceId);
 
                 if (serverResource != null) {
                     permission.setResourceId(serverResource.getId());
@@ -686,7 +695,7 @@ public class AuthorizationTokenService {
             requestedScopes.addAll(Arrays.asList(clientAdditionalScopes.split(" ")));
         }
 
-        Set<Scope> requestedScopesModel = requestedScopes.stream().map(s -> scopeStore.findByName(s, resourceServer.getId())).filter(
+        Set<Scope> requestedScopesModel = requestedScopes.stream().map(s -> scopeStore.findByName(resourceServer, s)).filter(
                 Objects::nonNull).collect(Collectors.toSet());
 
         if (!requestedScopes.isEmpty() && requestedScopesModel.isEmpty()) {
@@ -798,6 +807,130 @@ public class AuthorizationTokenService {
 
         ClientConnection getClientConnection() {
             return clientConnection;
+        }
+
+        public void addPermissions(List<String> permissionList, String permissionResourceFormat, boolean matchingUri) {
+            if (permissionResourceFormat == null) {
+                permissionResourceFormat = "id";
+            }
+
+            switch (permissionResourceFormat) {
+                case "id":
+                    addPermissionsById(permissionList);
+                    break;
+                case "uri":
+                    addPermissionsByUri(permissionList, matchingUri);
+                    break;
+            }
+
+        }
+
+        private void addPermissionsById(List<String> permissionList) {
+            for (String permission : permissionList) {
+                String[] parts = permission.split("#");
+                String rsid = parts[0];
+
+                if (parts.length == 1) {
+                    addPermission(rsid);
+                } else {
+                    String[] scopes = parts[1].split(",");
+                    addPermission(rsid, scopes);
+                }
+            }
+        }
+
+        private void addPermissionsByUri(List<String> permissionList, boolean matchingUri) {
+            StoreFactory storeFactory = authorization.getStoreFactory();
+
+            for (String permission : permissionList) {
+                String[] parts = permission.split("#");
+                String uri = parts[0];
+
+                if (parts.length == 1) {
+                    // only resource uri is specified
+                    if (uri.isEmpty()) {
+                        CorsErrorResponseException invalidResourceException = new CorsErrorResponseException(getCors(),
+                            OAuthErrorException.INVALID_REQUEST, "You must provide the uri", Status.BAD_REQUEST);
+                        fireErrorEvent(getEvent(), Errors.INVALID_REQUEST, invalidResourceException);
+                        throw invalidResourceException;
+                    }
+
+                    List<Resource> resources = getResourceListByUri(uri, storeFactory, matchingUri);
+
+                    if (resources == null || resources.isEmpty()) {
+                        CorsErrorResponseException invalidResourceException = new CorsErrorResponseException(getCors(),
+                            "invalid_resource", "Resource with uri [" + uri + "] does not exist.", Status.BAD_REQUEST);
+                        fireErrorEvent(getEvent(), Errors.INVALID_REQUEST, invalidResourceException);
+                        throw invalidResourceException;
+                    }
+
+                    resources.stream().forEach(resource -> addPermission(resource.getId()));
+                } else {
+                    // resource uri and scopes are specified, or only scopes are specified
+                    String[] scopes = parts[1].split(",");
+                    
+                    if (uri.isEmpty()) {
+                        // only scopes are specified
+                        addPermission("", scopes);
+                        return;
+                    }
+
+                    List<Resource> resources = getResourceListByUri(uri, storeFactory, matchingUri);
+
+                    if (resources == null || resources.isEmpty()) {
+                        CorsErrorResponseException invalidResourceException = new CorsErrorResponseException(getCors(),
+                            "invalid_resource", "Resource with uri [" + uri + "] does not exist.", Status.BAD_REQUEST);
+                        fireErrorEvent(getEvent(), Errors.INVALID_REQUEST, invalidResourceException);
+                        throw invalidResourceException;
+                    }
+
+                    resources.stream().forEach(resource -> addPermission(resource.getId(), scopes));
+                }
+            }
+        }
+
+        private List<Resource> getResourceListByUri(String uri, StoreFactory storeFactory, boolean matchingUri) {
+            Map<Resource.FilterOption, String[]> search = new EnumMap<>(Resource.FilterOption.class);
+            search.put(Resource.FilterOption.URI, new String[] { uri });
+            ResourceServer resourceServer = storeFactory.getResourceServerStore()
+                .findByClient(getRealm().getClientByClientId(getAudience()));
+            List<Resource> resources = storeFactory.getResourceStore().find(resourceServer, search, -1,
+                Constants.DEFAULT_MAX_RESULTS);
+
+            if (!matchingUri || !resources.isEmpty()) {
+                return resources;
+            }
+
+            search = new EnumMap<>(Resource.FilterOption.class);
+            search.put(Resource.FilterOption.URI_NOT_NULL, new String[] { "true" });
+            search.put(Resource.FilterOption.OWNER, new String[] { resourceServer.getClientId() });
+
+            List<Resource> serverResources = storeFactory.getResourceStore().find(resourceServer, search, -1, -1);
+
+            PathMatcher<Map.Entry<String, Resource>> pathMatcher = new PathMatcher<Map.Entry<String, Resource>>() {
+                @Override
+                protected String getPath(Map.Entry<String, Resource> entry) {
+                    return entry.getKey();
+                }
+
+                @Override
+                protected Collection<Map.Entry<String, Resource>> getPaths() {
+                    Map<String, Resource> result = new HashMap<>();
+                    serverResources.forEach(resource -> resource.getUris().forEach(uri -> {
+                        result.put(uri, resource);
+                    }));
+
+                    return result.entrySet();
+                }
+            };
+
+            Map.Entry<String, Resource> matches = pathMatcher.matches(uri);
+
+            if (matches != null) {
+                return Collections.singletonList(matches.getValue());
+            }
+
+            return null;
         }
     }
 }

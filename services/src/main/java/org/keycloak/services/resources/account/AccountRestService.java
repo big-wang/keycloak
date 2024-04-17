@@ -24,37 +24,35 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
-import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.HttpRequest;
+import org.jboss.resteasy.reactive.NoCache;
+import org.keycloak.http.HttpRequest;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.common.Profile;
 import org.keycloak.common.enums.AccountRestApiVersion;
 import org.keycloak.common.util.StringPropertyReplacer;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventBuilder;
-import org.keycloak.events.EventStoreProvider;
 import org.keycloak.events.EventType;
 import org.keycloak.models.AccountRoles;
 import org.keycloak.models.AuthenticatedClientSessionModel;
@@ -64,14 +62,13 @@ import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserConsentModel;
 import org.keycloak.models.UserModel;
-import org.keycloak.provider.ConfiguredProvider;
+import org.keycloak.models.utils.ModelToRepresentation;
 import org.keycloak.representations.account.ClientRepresentation;
 import org.keycloak.representations.account.ConsentRepresentation;
 import org.keycloak.representations.account.ConsentScopeRepresentation;
-import org.keycloak.representations.account.UserProfileAttributeMetadata;
-import org.keycloak.representations.account.UserProfileMetadata;
 import org.keycloak.representations.account.UserRepresentation;
 import org.keycloak.representations.idm.ErrorRepresentation;
+import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.services.ErrorResponse;
 import org.keycloak.services.managers.Auth;
 import org.keycloak.services.managers.UserConsentManager;
@@ -81,7 +78,6 @@ import org.keycloak.services.util.ResolveRelative;
 import org.keycloak.storage.ReadOnlyException;
 import org.keycloak.theme.Theme;
 import org.keycloak.userprofile.AttributeMetadata;
-import org.keycloak.userprofile.AttributeValidatorMetadata;
 import org.keycloak.userprofile.Attributes;
 import org.keycloak.userprofile.UserProfile;
 import org.keycloak.userprofile.UserProfileContext;
@@ -89,46 +85,41 @@ import org.keycloak.userprofile.UserProfileProvider;
 import org.keycloak.userprofile.EventAuditingAttributeChangeListener;
 import org.keycloak.userprofile.ValidationException;
 import org.keycloak.userprofile.ValidationException.Error;
-import org.keycloak.validate.Validators;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
 public class AccountRestService {
 
-    @Context
-    private HttpRequest request;
-    @Context
-    protected HttpHeaders headers;
-    @Context
-    protected ClientConnection clientConnection;
+    private final HttpRequest request;
+
+    protected final HttpHeaders headers;
+
+    protected final ClientConnection clientConnection;
 
     private final KeycloakSession session;
-    private final ClientModel client;
     private final EventBuilder event;
-    private EventStoreProvider eventStore;
-    private Auth auth;
+    private final Auth auth;
     
     private final RealmModel realm;
     private final UserModel user;
     private final Locale locale;
     private final AccountRestApiVersion version;
 
-    public AccountRestService(KeycloakSession session, Auth auth, ClientModel client, EventBuilder event, AccountRestApiVersion version) {
+    public AccountRestService(KeycloakSession session, Auth auth, EventBuilder event, AccountRestApiVersion version) {
         this.session = session;
+        this.clientConnection = session.getContext().getConnection();
         this.auth = auth;
         this.realm = auth.getRealm();
         this.user = auth.getUser();
-        this.client = client;
         this.event = event;
         this.locale = session.getContext().resolveLocale(user);
         this.version = version;
+        event.client(auth.getClient()).user(auth.getUser());
+        this.request = session.getContext().getHttpRequest();
+        this.headers = session.getContext().getRequestHeaders();
     }
     
-    public void init() {
-        eventStore = session.getProvider(EventStoreProvider.class);
-    }
-
     /**
      * Get account information.
      *
@@ -138,61 +129,21 @@ public class AccountRestService {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @NoCache
-    public UserRepresentation account(final @PathParam("userProfileMetadata") Boolean userProfileMetadata) {
+    public UserRepresentation account(final @QueryParam("userProfileMetadata") Boolean userProfileMetadata) {
         auth.requireOneOf(AccountRoles.MANAGE_ACCOUNT, AccountRoles.VIEW_PROFILE);
 
         UserModel user = auth.getUser();
-
-        UserRepresentation rep = new UserRepresentation();
-        rep.setId(user.getId());
-        rep.setUsername(user.getUsername());
-        rep.setFirstName(user.getFirstName());
-        rep.setLastName(user.getLastName());
-        rep.setEmail(user.getEmail());
-        rep.setEmailVerified(user.isEmailVerified());
-
         UserProfileProvider provider = session.getProvider(UserProfileProvider.class);
         UserProfile profile = provider.create(UserProfileContext.ACCOUNT, user);
+        UserRepresentation rep = profile.toRepresentation();
 
-        rep.setAttributes(profile.getAttributes().getReadable(false));
+        if (userProfileMetadata != null && !userProfileMetadata) {
+            rep.setUserProfileMetadata(null);
+        }
 
-        if(userProfileMetadata == null || userProfileMetadata.booleanValue())
-            rep.setUserProfileMetadata(createUserProfileMetadata(profile));
-        
         return rep;
     }
-    
-    private UserProfileMetadata createUserProfileMetadata(final UserProfile profile) {
-        Map<String, List<String>> am = profile.getAttributes().getReadable();
-        
-        if(am == null)
-            return null;
-        
-        List<UserProfileAttributeMetadata> attributes = am.keySet().stream()
-                                                          .map(name -> profile.getAttributes().getMetadata(name))
-                                                          .filter(Objects::nonNull)
-                                                          .sorted((a,b) -> Integer.compare(a.getGuiOrder(), b.getGuiOrder()))
-                                                          .map(sam -> toRestMetadata(sam, profile))
-                                                          .collect(Collectors.toList());  
-        return new UserProfileMetadata(attributes);
-    }
 
-    private UserProfileAttributeMetadata toRestMetadata(AttributeMetadata am, UserProfile profile) {
-        return new UserProfileAttributeMetadata(am.getName(), 
-                                                am.getAttributeDisplayName(), 
-                                                profile.getAttributes().isRequired(am.getName()), 
-                                                profile.getAttributes().isReadOnly(am.getName()), 
-                                                am.getAnnotations(), 
-                                                toValidatorMetadata(am));
-    }
-    
-    private Map<String, Map<String, Object>> toValidatorMetadata(AttributeMetadata am){
-        // we return only validators which are instance of ConfiguredProvider. Others are expected as internal.
-        return am.getValidators() == null ? null : am.getValidators().stream()
-                .filter(avm -> (Validators.validator(session, avm.getValidatorId()) instanceof ConfiguredProvider))
-                .collect(Collectors.toMap(AttributeValidatorMetadata::getValidatorId, AttributeValidatorMetadata::getValidatorConfig));
-    }
-    
     @Path("/")
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
@@ -201,10 +152,10 @@ public class AccountRestService {
     public Response updateAccount(UserRepresentation rep) {
         auth.require(AccountRoles.MANAGE_ACCOUNT);
 
-        event.event(EventType.UPDATE_PROFILE).client(auth.getClient()).user(auth.getUser()).detail(Details.CONTEXT, UserProfileContext.ACCOUNT.name());
+        event.event(EventType.UPDATE_PROFILE).detail(Details.CONTEXT, UserProfileContext.ACCOUNT.name());
 
         UserProfileProvider profileProvider = session.getProvider(UserProfileProvider.class);
-        UserProfile profile = profileProvider.create(UserProfileContext.ACCOUNT, rep.toAttributes(), auth.getUser());
+        UserProfile profile = profileProvider.create(UserProfileContext.ACCOUNT, rep.getRawAttributes(), auth.getUser());
 
         try {
 
@@ -218,9 +169,9 @@ public class AccountRestService {
             for(Error err: pve.getErrors()) {
                 errors.add(new ErrorRepresentation(err.getAttribute(), err.getMessage(), validationErrorParamsToString(err.getMessageParameters(), profile.getAttributes())));
             }
-            return ErrorResponse.errors(errors, pve.getStatusCode(), false);
+            throw ErrorResponse.errors(errors, pve.getStatusCode(), false);
         } catch (ReadOnlyException e) {
-            return ErrorResponse.error(Messages.READ_ONLY_USER, Response.Status.BAD_REQUEST);
+            throw ErrorResponse.error(Messages.READ_ONLY_USER, Response.Status.BAD_REQUEST);
         }
     }
 
@@ -257,13 +208,13 @@ public class AccountRestService {
     public SessionResource sessions() {
         checkAccountApiEnabled();
         auth.requireOneOf(AccountRoles.MANAGE_ACCOUNT, AccountRoles.VIEW_PROFILE);
-        return new SessionResource(session, auth, request);
+        return new SessionResource(session, auth);
     }
 
     @Path("/credentials")
     public AccountCredentialResource credentials() {
         checkAccountApiEnabled();
-        return new AccountCredentialResource(session, user, auth);
+        return new AccountCredentialResource(session, user, auth, event);
     }
 
     @Path("/resources")
@@ -271,6 +222,12 @@ public class AccountRestService {
         checkAccountApiEnabled();
         auth.requireOneOf(AccountRoles.MANAGE_ACCOUNT, AccountRoles.VIEW_PROFILE);
         return new ResourcesService(session, user, auth, request);
+    }
+
+    @Path("supportedLocales")
+    @GET
+    public List<String> supportedLocales() {
+        return auth.getRealm().getSupportedLocalesStream().collect(Collectors.toList());
     }
 
     private ClientRepresentation modelToRepresentation(ClientModel model, List<String> inUseClients, List<String> offlineClients, Map<String, UserConsentModel> consents) {
@@ -296,7 +253,7 @@ public class AccountRestService {
 
     private ConsentRepresentation modelToRepresentation(UserConsentModel model) {
         List<ConsentScopeRepresentation> grantedScopes = model.getGrantedClientScopes().stream()
-                .map(m -> new ConsentScopeRepresentation(m.getId(), m.getName(), StringPropertyReplacer.replaceProperties(m.getConsentScreenText(), getProperties())))
+                .map(m -> new ConsentScopeRepresentation(m.getId(), m.getConsentScreenText()!= null ? m.getConsentScreenText() : m.getName(), StringPropertyReplacer.replaceProperties(m.getConsentScreenText(), getProperties())))
                 .collect(Collectors.toList());
         return new ConsentRepresentation(grantedScopes, model.getCreatedDate(), model.getLastUpdatedDate());
     }
@@ -324,10 +281,10 @@ public class AccountRestService {
 
         ClientModel client = realm.getClientByClientId(clientId);
         if (client == null) {
-            return ErrorResponse.error("No client with clientId: " + clientId + " found.", Response.Status.NOT_FOUND);
+            throw ErrorResponse.error("No client with clientId: " + clientId + " found.", Response.Status.NOT_FOUND);
         }
 
-        UserConsentModel consent = session.users().getConsentByClient(realm, user.getId(), client.getId());
+        UserConsentModel consent = UserConsentManager.getConsentByClient(session, realm, user, client.getId());
         if (consent == null) {
             return Response.noContent().build();
         }
@@ -350,14 +307,13 @@ public class AccountRestService {
         event.event(EventType.REVOKE_GRANT);
         ClientModel client = realm.getClientByClientId(clientId);
         if (client == null) {
-            event.event(EventType.REVOKE_GRANT_ERROR);
             String msg = String.format("No client with clientId: %s found.", clientId);
             event.error(msg);
-            return ErrorResponse.error(msg, Response.Status.NOT_FOUND);
+            throw ErrorResponse.error(msg, Response.Status.NOT_FOUND);
         }
 
         UserConsentManager.revokeConsentToClient(session, client, user);
-        event.success();
+        event.detail(Details.REVOKED_CLIENT, client.getClientId()).success();
 
         return Response.noContent().build();
     }
@@ -375,6 +331,7 @@ public class AccountRestService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response grantConsent(final @PathParam("clientId") String clientId,
                                  final ConsentRepresentation consent) {
+        event.event(EventType.GRANT_CONSENT);
         return upsert(clientId, consent);
     }
 
@@ -391,6 +348,7 @@ public class AccountRestService {
     @Produces(MediaType.APPLICATION_JSON)
     public Response updateConsent(final @PathParam("clientId") String clientId,
                                   final ConsentRepresentation consent) {
+        event.event(EventType.UPDATE_CONSENT);
         return upsert(clientId, consent);
     }
 
@@ -406,27 +364,29 @@ public class AccountRestService {
         checkAccountApiEnabled();
         auth.requireOneOf(AccountRoles.MANAGE_ACCOUNT, AccountRoles.MANAGE_CONSENT);
 
-        event.event(EventType.GRANT_CONSENT);
         ClientModel client = realm.getClientByClientId(clientId);
         if (client == null) {
-            event.event(EventType.GRANT_CONSENT_ERROR);
             String msg = String.format("No client with clientId: %s found.", clientId);
             event.error(msg);
-            return ErrorResponse.error(msg, Response.Status.NOT_FOUND);
+            throw ErrorResponse.error(msg, Response.Status.NOT_FOUND);
         }
 
         try {
             UserConsentModel grantedConsent = createConsent(client, consent);
-            if (session.users().getConsentByClient(realm, user.getId(), client.getId()) == null) {
-                session.users().addConsent(realm, user.getId(), grantedConsent);
+            if (UserConsentManager.getConsentByClient(session, realm, user, client.getId()) == null) {
+                UserConsentManager.addConsent(session, realm, user, grantedConsent);
+                event.event(EventType.GRANT_CONSENT);
             } else {
-                session.users().updateConsent(realm, user.getId(), grantedConsent);
+                UserConsentManager.updateConsent(session, realm, user, grantedConsent);
+                event.event(EventType.UPDATE_CONSENT);
             }
-            event.success();
-            grantedConsent = session.users().getConsentByClient(realm, user.getId(), client.getId());
+            event.detail(Details.GRANTED_CLIENT,client.getClientId());
+            String scopeString = grantedConsent.getGrantedClientScopes().stream().map(cs->cs.getName()).collect(Collectors.joining(" "));
+            event.detail(Details.SCOPE, scopeString).success();
+            grantedConsent = UserConsentManager.getConsentByClient(session, realm, user, client.getId());
             return Response.ok(modelToRepresentation(grantedConsent)).build();
         } catch (IllegalArgumentException e) {
-            return ErrorResponse.error(e.getMessage(), Response.Status.BAD_REQUEST);
+            throw ErrorResponse.error(e.getMessage(), Response.Status.BAD_REQUEST);
         }
     }
 
@@ -463,7 +423,17 @@ public class AccountRestService {
     
     @Path("/linked-accounts")
     public LinkedAccountsResource linkedAccounts() {
-        return new LinkedAccountsResource(session, request, client, auth, event, user);
+        return new LinkedAccountsResource(session, request, auth, event, user);
+    }
+
+    @Path("/groups")
+    @GET
+    @NoCache
+    @Produces(MediaType.APPLICATION_JSON)
+    //TODO GROUPS this isn't paginated
+    public Stream<GroupRepresentation> groupMemberships(@QueryParam("briefRepresentation") @DefaultValue("true") boolean briefRepresentation) {
+        auth.require(AccountRoles.VIEW_GROUPS);
+        return user.getGroupsStream().map(g -> ModelToRepresentation.toRepresentation(g, !briefRepresentation));
     }
 
     @Path("/applications")
@@ -490,7 +460,7 @@ public class AccountRestService {
                 .collect(Collectors.toSet()));
 
         Map<String, UserConsentModel> consentModels = new HashMap<>();
-        clients.addAll(session.users().getConsentsStream(realm, user.getId())
+        clients.addAll(UserConsentManager.getConsentsStream(session, realm, user)
                 .peek(consent -> consentModels.put(consent.getClient().getClientId(), consent))
                 .map(UserConsentModel::getClient)
                 .collect(Collectors.toSet()));

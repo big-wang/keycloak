@@ -19,7 +19,7 @@ package org.keycloak.testsuite.util;
 
 import java.util.List;
 
-import javax.ws.rs.NotFoundException;
+import jakarta.ws.rs.NotFoundException;
 
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
@@ -45,13 +45,14 @@ public class TestCleanup {
     private static final String GROUP_IDS = "GROUP_IDS";
     private static final String AUTH_FLOW_IDS = "AUTH_FLOW_IDS";
     private static final String AUTH_CONFIG_IDS = "AUTH_CONFIG_IDS";
+    private static final String REQUIRED_ACTION_ALIASES = "REQUIRED_ACTION_PROVIDERS";
     private static final String LOCALIZATION_LANGUAGES = "LOCALIZATION_LANGUAGES";
 
     private final TestContext testContext;
     private final String realmName;
     private final ConcurrentLinkedDeque<Runnable> genericCleanups = new ConcurrentLinkedDeque<>();
 
-    // Key is kind of entity (eg. "client", "role", "user" etc), Values are all kind of entities of given type to cleanup
+    // Key is kind of entity (eg. "client", "role", "user" etc), Values are all IDs of entities of given type to cleanup
     private final ConcurrentMultivaluedHashMap<String, String> entities = new ConcurrentMultivaluedHashMap<>();
 
 
@@ -60,11 +61,6 @@ public class TestCleanup {
         this.realmName = realmName;
     }
 
-
-    public TestCleanup addCleanup(Runnable r) {
-        genericCleanups.add(r);
-        return this;
-    }
 
     public TestCleanup addCleanup(AutoCloseable c) {
         genericCleanups.add(() -> {
@@ -123,6 +119,9 @@ public class TestCleanup {
         entities.add(AUTH_CONFIG_IDS, executionConfigId);
     }
 
+    public void addRequiredAction(String alias) {
+        entities.add(REQUIRED_ACTION_ALIASES, alias);
+    }
 
     public void executeCleanup() {
         RealmResource realm = getAdminClient().realm(realmName);
@@ -236,6 +235,17 @@ public class TestCleanup {
                     realm.localization().deleteRealmLocalizationTexts(localizationLanguage);
                 } catch (NotFoundException nfe) {
                     // Localization texts might be already deleted in the test
+                }
+            }
+        }
+
+        List<String> requiredActionAliases = entities.get(REQUIRED_ACTION_ALIASES);
+        if (requiredActionAliases != null) {
+            for (String alias : requiredActionAliases) {
+                try {
+                    realm.flows().removeRequiredAction(alias);
+                } catch (NotFoundException nfe) {
+                    // required action might be already deleted in the test
                 }
             }
         }

@@ -33,7 +33,10 @@ import org.keycloak.util.TokenUtil;
 import javax.crypto.SecretKey;
 
 import java.security.PublicKey;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -107,7 +110,7 @@ public class TokenVerifier<T extends JsonWebToken> {
             }
 
             if (! this.realmUrl.equals(t.getIssuer())) {
-                throw new VerificationException("Invalid token issuer. Expected '" + this.realmUrl + "', but was '" + t.getIssuer() + "'");
+                throw new VerificationException("Invalid token issuer. Expected '" + this.realmUrl + "'");
             }
 
             return true;
@@ -116,20 +119,20 @@ public class TokenVerifier<T extends JsonWebToken> {
 
     public static class TokenTypeCheck implements Predicate<JsonWebToken> {
 
-        private static final TokenTypeCheck INSTANCE_BEARER = new TokenTypeCheck(TokenUtil.TOKEN_TYPE_BEARER);
+        private static final TokenTypeCheck INSTANCE_DEFAULT_TOKEN_TYPE = new TokenTypeCheck(Arrays.asList(TokenUtil.TOKEN_TYPE_BEARER, TokenUtil.TOKEN_TYPE_DPOP));
 
-        private final String tokenType;
+        private final List<String> tokenTypes;
 
-        public TokenTypeCheck(String tokenType) {
-            this.tokenType = tokenType;
+        public TokenTypeCheck(List<String> tokenTypes) {
+            this.tokenTypes = tokenTypes;
         }
 
         @Override
         public boolean test(JsonWebToken t) throws VerificationException {
-            if (! tokenType.equalsIgnoreCase(t.getType())) {
-                throw new VerificationException("Token type is incorrect. Expected '" + tokenType + "' but was '" + t.getType() + "'");
+            for (String tokenType : tokenTypes) {
+                if (tokenType.equalsIgnoreCase(t.getType())) return true;
             }
-            return true;
+            throw new VerificationException("Token type is incorrect. Expected '" + tokenTypes.toString() + "' but was '" + t.getType() + "'");
         }
     };
 
@@ -190,7 +193,7 @@ public class TokenVerifier<T extends JsonWebToken> {
     private PublicKey publicKey;
     private SecretKey secretKey;
     private String realmUrl;
-    private String expectedTokenType = TokenUtil.TOKEN_TYPE_BEARER;
+    private List<String> expectedTokenType = Arrays.asList(TokenUtil.TOKEN_TYPE_BEARER, TokenUtil.TOKEN_TYPE_DPOP);
     private boolean checkTokenType = true;
     private boolean checkRealmUrl = true;
     private final LinkedList<Predicate<? super T>> checks = new LinkedList<>();
@@ -224,7 +227,7 @@ public class TokenVerifier<T extends JsonWebToken> {
      * @return
      */
     public static <T extends JsonWebToken> TokenVerifier<T> create(String tokenString, Class<T> clazz) {
-        return new TokenVerifier(tokenString, clazz);
+        return new TokenVerifier<>(tokenString, clazz);
     }
 
     /**
@@ -237,7 +240,7 @@ public class TokenVerifier<T extends JsonWebToken> {
      * @return
      */
     public static <T extends JsonWebToken> TokenVerifier<T> createWithoutSignature(T token) {
-        return new TokenVerifier(token);
+        return new TokenVerifier<>(token);
     }
 
     /**
@@ -253,8 +256,7 @@ public class TokenVerifier<T extends JsonWebToken> {
     public TokenVerifier<T> withDefaultChecks()  {
         return withChecks(
           RealmUrlCheck.NULL_INSTANCE,
-          SUBJECT_EXISTS_CHECK,
-          TokenTypeCheck.INSTANCE_BEARER,
+          TokenTypeCheck.INSTANCE_DEFAULT_TOKEN_TYPE,
           IS_ACTIVE
         );
     }
@@ -271,6 +273,7 @@ public class TokenVerifier<T extends JsonWebToken> {
         checks.remove(check);
     }
 
+    @SuppressWarnings("unchecked")
     private <P extends Predicate<? super T>> TokenVerifier<T> replaceCheck(Class<? extends Predicate<?>> checkClass, boolean active, P... predicate) {
         removeCheck(checkClass);
         if (active) {
@@ -279,6 +282,7 @@ public class TokenVerifier<T extends JsonWebToken> {
         return this;
     }
 
+    @SuppressWarnings("unchecked")
     private <P extends Predicate<? super T>> TokenVerifier<T> replaceCheck(Predicate<? super T> check, boolean active, P... predicate) {
         removeCheck(check);
         if (active) {
@@ -292,7 +296,8 @@ public class TokenVerifier<T extends JsonWebToken> {
      * @param checks
      * @return
      */
-    public TokenVerifier<T> withChecks(Predicate<? super T>... checks) {
+    @SafeVarargs
+    public final TokenVerifier<T> withChecks(Predicate<? super T>... checks) {
         if (checks != null) {
             this.checks.addAll(Arrays.asList(checks));
         }
@@ -341,8 +346,8 @@ public class TokenVerifier<T extends JsonWebToken> {
      *
      * @return This token verifier
      */
-    public TokenVerifier<T> tokenType(String tokenType) {
-        this.expectedTokenType = tokenType;
+    public TokenVerifier<T> tokenType(List<String> tokenTypes) {
+        this.expectedTokenType = tokenTypes;
         return replaceCheck(TokenTypeCheck.class, this.checkTokenType, new TokenTypeCheck(expectedTokenType));
     }
 
@@ -509,6 +514,7 @@ public class TokenVerifier<T extends JsonWebToken> {
      * @param predicates
      * @return
      */
+    @SafeVarargs
     public static <T extends JsonWebToken> Predicate<T> alternative(final Predicate<? super T>... predicates) {
         return new Predicate<T>() {
             @Override

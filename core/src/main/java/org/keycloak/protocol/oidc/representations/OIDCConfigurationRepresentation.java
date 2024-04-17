@@ -64,6 +64,9 @@ public class OIDCConfigurationRepresentation {
     @JsonProperty("grant_types_supported")
     private List<String> grantTypesSupported;
 
+    @JsonProperty("acr_values_supported")
+    private List<String> acrValuesSupported;
+
     @JsonProperty("response_types_supported")
     private List<String> responseTypesSupported;
 
@@ -81,6 +84,12 @@ public class OIDCConfigurationRepresentation {
 
     @JsonProperty("userinfo_signing_alg_values_supported")
     private List<String> userInfoSigningAlgValuesSupported;
+
+    @JsonProperty("userinfo_encryption_alg_values_supported")
+    private List<String> userInfoEncryptionAlgValuesSupported;
+
+    @JsonProperty("userinfo_encryption_enc_values_supported")
+    private List<String> userInfoEncryptionEncValuesSupported;
 
     @JsonProperty("request_object_signing_alg_values_supported")
     private List<String> requestObjectSigningAlgValuesSupported;
@@ -148,6 +157,9 @@ public class OIDCConfigurationRepresentation {
     @JsonProperty("tls_client_certificate_bound_access_tokens")
     private Boolean tlsClientCertificateBoundAccessTokens;
 
+    @JsonProperty("dpop_signing_alg_values_supported")
+    private List<String> dpopSigningAlgValuesSupported;
+
     @JsonProperty("revocation_endpoint")
     private String revocationEndpoint;
 
@@ -183,6 +195,9 @@ public class OIDCConfigurationRepresentation {
 
     @JsonProperty("mtls_endpoint_aliases")
     private MTLSEndpointAliases mtlsEndpointAliases;
+
+    @JsonProperty("authorization_response_iss_parameter_supported")
+    private Boolean authorizationResponseIssParameterSupported;
 
     protected Map<String, Object> otherClaims = new HashMap<String, Object>();
 
@@ -258,6 +273,14 @@ public class OIDCConfigurationRepresentation {
         this.grantTypesSupported = grantTypesSupported;
     }
 
+    public List<String> getAcrValuesSupported() {
+        return acrValuesSupported;
+    }
+
+    public void setAcrValuesSupported(List<String> acrValuesSupported) {
+        this.acrValuesSupported = acrValuesSupported;
+    }
+
     public List<String> getResponseTypesSupported() {
         return responseTypesSupported;
     }
@@ -304,6 +327,22 @@ public class OIDCConfigurationRepresentation {
 
     public void setUserInfoSigningAlgValuesSupported(List<String> userInfoSigningAlgValuesSupported) {
         this.userInfoSigningAlgValuesSupported = userInfoSigningAlgValuesSupported;
+    }
+
+    public List<String> getUserInfoEncryptionAlgValuesSupported() {
+        return userInfoEncryptionAlgValuesSupported;
+    }
+
+    public void setUserInfoEncryptionAlgValuesSupported(List<String> userInfoEncryptionAlgValuesSupported) {
+        this.userInfoEncryptionAlgValuesSupported = userInfoEncryptionAlgValuesSupported;
+    }
+
+    public List<String> getUserInfoEncryptionEncValuesSupported() {
+        return userInfoEncryptionEncValuesSupported;
+    }
+
+    public void setUserInfoEncryptionEncValuesSupported(List<String> userInfoEncryptionEncValuesSupported) {
+        this.userInfoEncryptionEncValuesSupported = userInfoEncryptionEncValuesSupported;
     }
 
     public List<String> getRequestObjectSigningAlgValuesSupported() {
@@ -454,6 +493,14 @@ public class OIDCConfigurationRepresentation {
         this.tlsClientCertificateBoundAccessTokens = tlsClientCertificateBoundAccessTokens;
     }
 
+    public List<String> getDpopSigningAlgValuesSupported() {
+        return dpopSigningAlgValuesSupported;
+    }
+
+    public void setDpopSigningAlgValuesSupported(List<String> dpopSigningAlgValuesSupported) {
+        this.dpopSigningAlgValuesSupported = dpopSigningAlgValuesSupported;
+    }
+
     public String getRevocationEndpoint() {
         return revocationEndpoint;
     }
@@ -591,4 +638,13 @@ public class OIDCConfigurationRepresentation {
     public Boolean getFrontChannelLogoutSupported() {
         return frontChannelLogoutSupported;
     }
+
+    public Boolean getAuthorizationResponseIssParameterSupported() {
+        return authorizationResponseIssParameterSupported;
+    }
+
+    public void setAuthorizationResponseIssParameterSupported(Boolean authorizationResponseIssParameterSupported) {
+        this.authorizationResponseIssParameterSupported = authorizationResponseIssParameterSupported;
+    }
+
 }

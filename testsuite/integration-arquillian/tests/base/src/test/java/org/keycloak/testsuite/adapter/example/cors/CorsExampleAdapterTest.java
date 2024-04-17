@@ -25,36 +25,27 @@ import org.jboss.arquillian.test.api.ArquillianResource;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
-import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Test;
-import org.keycloak.common.Profile;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.adapter.AbstractExampleAdapterTest;
 import org.keycloak.testsuite.adapter.page.AngularCorsProductTestApp;
 import org.keycloak.testsuite.adapter.page.CorsDatabaseServiceTestApp;
 import org.keycloak.testsuite.arquillian.annotation.AppServerContainer;
-import org.keycloak.testsuite.arquillian.annotation.DisableFeature;
-import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
-import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
-import org.keycloak.testsuite.auth.page.account.Account;
-import org.keycloak.testsuite.auth.page.login.OIDCLogin;
 import org.keycloak.testsuite.util.JavascriptBrowser;
-import org.keycloak.testsuite.util.WaitUtils;
+import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
+import org.keycloak.testsuite.auth.page.login.OIDCLogin;
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static junit.framework.TestCase.assertNotNull;
-import org.junit.Assume;
 import org.keycloak.testsuite.util.DroneUtils;
 
-import static org.keycloak.common.Profile.Feature.UPLOAD_SCRIPTS;
 import static org.keycloak.testsuite.utils.io.IOUtil.loadRealm;
 import static org.keycloak.testsuite.util.URLAssert.assertCurrentUrlStartsWith;
 import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
@@ -71,12 +62,9 @@ import static org.keycloak.testsuite.util.WaitUtils.waitUntilElement;
  * @author fkiss
  */
 @AppServerContainer(ContainerConstants.APP_SERVER_WILDFLY)
-@AppServerContainer(ContainerConstants.APP_SERVER_WILDFLY_DEPRECATED)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP6)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP71)
-@EnableFeature(value = UPLOAD_SCRIPTS, skipRestart = true)
-@DisableFeature(value = Profile.Feature.ACCOUNT2, skipRestart = true) // TODO remove this (KEYCLOAK-16228)
 public class CorsExampleAdapterTest extends AbstractExampleAdapterTest {
 
     public static final String CORS = "cors";
@@ -84,7 +72,7 @@ public class CorsExampleAdapterTest extends AbstractExampleAdapterTest {
     @ArquillianResource
     private Deployer deployer;
 
-    // Javascript browser needed KEYCLOAK-4703
+    // Javascript browser needed, but not PhantomJS
     @Drone
     @JavascriptBrowser
     protected WebDriver jsDriver;
@@ -96,10 +84,6 @@ public class CorsExampleAdapterTest extends AbstractExampleAdapterTest {
     @Page
     @JavascriptBrowser
     private AngularCorsProductTestApp jsDriverAngularCorsProductPage;
-
-    @Page
-    @JavascriptBrowser
-    private Account jsDriverTestRealmAccount;
 
     @Deployment(name = AngularCorsProductTestApp.DEPLOYMENT_NAME, managed = false)
     protected static WebArchive angularCorsProductExample() throws IOException {
@@ -135,7 +119,7 @@ public class CorsExampleAdapterTest extends AbstractExampleAdapterTest {
     public void setDefaultPageUriParameters() {
         super.setDefaultPageUriParameters();
         jsDriverTestRealmLoginPage.setAuthRealm(CORS);
-        jsDriverTestRealmAccount.setAuthRealm(CORS);
+        oauth.realm(CORS);
     }
 
     @Test
@@ -183,17 +167,13 @@ public class CorsExampleAdapterTest extends AbstractExampleAdapterTest {
     @Nullable
     private String getAuthServerVersion() {
         DroneUtils.getCurrentDriver().navigate().to(suiteContext.getAuthServerInfo().getContextRoot().toString() +
-                "/auth/admin/master/console/#/server-info");
+                "/auth/admin/master/console/#/master/info");
         jsDriverTestRealmLoginPage.form().login("admin", "admin");
-
-        Pattern pattern = Pattern.compile("<td [^>]+>Server Version</td>" +
-                "\\s+<td [^>]+>([^<]+)</td>");
-        Matcher matcher = pattern.matcher(DroneUtils.getCurrentDriver().getPageSource());
-
-        if (matcher.find()) {
-            return matcher.group(1);
+        // just get the first list description which is the version
+        List<WebElement> elements = jsDriver.findElements(By.xpath(".//dd[@class='pf-v5-c-description-list__description']"));
+        if (!elements.isEmpty()) {
+            return elements.get(0).getText();
         }
-
         return null;
     }
 }

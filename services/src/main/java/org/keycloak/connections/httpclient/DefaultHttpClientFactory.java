@@ -23,6 +23,8 @@ import org.apache.http.client.entity.EntityBuilder;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ContentType;
+import org.apache.http.impl.client.AbstractResponseHandler;
+import org.apache.http.impl.client.BasicResponseHandler;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.jboss.logging.Logger;
 import org.keycloak.Config;
@@ -30,12 +32,16 @@ import org.keycloak.common.util.EnvUtil;
 import org.keycloak.common.util.KeystoreUtil;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
+import org.keycloak.provider.ProviderConfigProperty;
+import org.keycloak.provider.ProviderConfigurationBuilder;
 import org.keycloak.truststore.TruststoreProvider;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.util.EntityUtils;
 
@@ -44,20 +50,11 @@ import static org.keycloak.utils.StringUtil.isBlank;
 /**
  * The default {@link HttpClientFactory} for {@link HttpClientProvider HttpClientProvider's} used by Keycloak for outbound HTTP calls.
  * <p>
- * The constructed clients can be configured via Keycloaks SPI configuration, e.g. {@code standalone.xml, standalone-ha.xml, domain.xml}.
- * </p>
+ * Example for Quarkus configuration:
  * <p>
- * Examples for jboss-cli
- * </p>
- * <pre>
  * {@code
- *
- * /subsystem=keycloak-server/spi=connectionsHttpClient/provider=default:add(enabled=true)
- * /subsystem=keycloak-server/spi=connectionsHttpClient/provider=default:write-attribute(name=properties.connection-pool-size,value=128)
- * /subsystem=keycloak-server/spi=connectionsHttpClient/provider=default:write-attribute(name=properties.proxy-mappings,value=[".*\\.(google|googleapis)\\.com;http://www-proxy.acme.corp.com:8080",".*\\.acme\\.corp\\.com;NO_PROXY",".*;http://fallback:8080"])
+ * spi-connections-http-client-default-connection-pool-size=10
  * }
- * </pre>
- * </p>
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
 public class DefaultHttpClientFactory implements HttpClientFactory {
@@ -68,9 +65,26 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
     private static final String HTTPS_PROXY = "https_proxy";
     private static final String HTTP_PROXY = "http_proxy";
     private static final String NO_PROXY = "no_proxy";
+    public static final String MAX_CONSUMED_RESPONSE_SIZE = "max-consumed-response-size";
 
     private volatile CloseableHttpClient httpClient;
     private Config.Scope config;
+
+    private BasicResponseHandler stringResponseHandler;
+
+    private final InputStreamResponseHandler inputStreamResponseHandler = new InputStreamResponseHandler();
+    private long maxConsumedResponseSize;
+
+    private static class InputStreamResponseHandler extends AbstractResponseHandler<InputStream> {
+
+        public InputStream handleEntity(HttpEntity entity) throws IOException {
+            return entity.getContent();
+        }
+
+        public InputStream handleResponse(HttpResponse response) throws IOException {
+            return super.handleResponse(response);
+        }
+    }
 
     @Override
     public HttpClientProvider create(KeycloakSession session) {
@@ -104,13 +118,30 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
             }
 
             @Override
-            public InputStream get(String uri) throws IOException {
+            public String getString(String uri) throws IOException {
                 HttpGet request = new HttpGet(uri);
                 HttpResponse response = httpClient.execute(request);
-                HttpEntity entity = response.getEntity();
-                if (entity == null) return null;
-                return entity.getContent();
+                String body = stringResponseHandler.handleResponse(response);
+                if (body == null) {
+                    throw new IOException("No content returned from HTTP call");
+                }
+                return body;
+            }
 
+            @Override
+            public InputStream getInputStream(String uri) throws IOException {
+                HttpGet request = new HttpGet(uri);
+                HttpResponse response = httpClient.execute(request);
+                InputStream body = inputStreamResponseHandler.handleResponse(response);
+                if (body == null) {
+                    throw new IOException("No content returned from HTTP call");
+                }
+                return body;
+            }
+
+            @Override
+            public long getMaxConsumedResponseSize() {
+                return maxConsumedResponseSize;
             }
         };
     }
@@ -121,7 +152,7 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
             if (httpClient != null) {
                 httpClient.close();
             }
-        } catch (IOException e) {
+        } catch (IOException ignored) {
 
         }
     }
@@ -188,11 +219,11 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
 
                     TruststoreProvider truststoreProvider = session.getProvider(TruststoreProvider.class);
                     boolean disableTruststoreProvider = truststoreProvider == null || truststoreProvider.getTruststore() == null;
-                    
+
                     if (disableTruststoreProvider) {
                     	logger.warn("TruststoreProvider is disabled");
                     } else {
-                        builder.hostnameVerification(HttpClientBuilder.HostnameVerificationPolicy.valueOf(truststoreProvider.getPolicy().name()));
+                        builder.hostnameVerification(truststoreProvider.getPolicy());
                         try {
                             builder.trustStore(truststoreProvider.getTruststore());
                         } catch (Exception e) {
@@ -204,7 +235,7 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
                     	logger.warn("TrustManager is disabled");
                     	builder.disableTrustManager();
                     }
-                    
+
                     if (clientKeystore != null) {
                         clientKeystore = EnvUtil.replace(clientKeystore);
                         try {
@@ -222,7 +253,94 @@ public class DefaultHttpClientFactory implements HttpClientFactory {
 
     @Override
     public void postInit(KeycloakSessionFactory factory) {
+        maxConsumedResponseSize = config.getLong(MAX_CONSUMED_RESPONSE_SIZE, HttpClientProvider.DEFAULT_MAX_CONSUMED_RESPONSE_SIZE);
+        stringResponseHandler = new SafeBasicResponseHandler(maxConsumedResponseSize);
+    }
 
+    @Override
+    public List<ProviderConfigProperty> getConfigMetadata() {
+        return ProviderConfigurationBuilder.create()
+                .property()
+                .name("socket-timeout-millis")
+                .type("long")
+                .helpText("Socket inactivity timeout.")
+                .defaultValue(5000L)
+                .add()
+                .property()
+                .name("establish-connection-timeout-millis")
+                .type("long")
+                .helpText("When trying to make an initial socket connection, what is the timeout?")
+                .defaultValue(-1L)
+                .add()
+                .property()
+                .name("max-pooled-per-route")
+                .type("int")
+                .helpText("Assigns maximum connection per route value.")
+                .defaultValue(64)
+                .add()
+                .property()
+                .name("connection-pool-size")
+                .type("int")
+                .helpText("Assigns maximum total connection value.")
+                .add()
+                .property()
+                .name("connection-ttl-millis")
+                .type("long")
+                .helpText("Sets maximum time, in milliseconds, to live for persistent connections.")
+                .defaultValue(-1L)
+                .add()
+                .property()
+                .name("reuse-connections")
+                .type("boolean")
+                .helpText("If connections should be reused.")
+                .defaultValue(true)
+                .add()
+                .property()
+                .name("max-connection-idle-time-millis")
+                .type("long")
+                .helpText("Sets the time, in milliseconds, for evicting idle connections from the pool.")
+                .defaultValue(900000)
+                .add()
+                .property()
+                .name("disable-cookies")
+                .type("boolean")
+                .helpText("Disables state (cookie) management.")
+                .defaultValue(true)
+                .add()
+                .property()
+                .name("client-keystore")
+                .type("string")
+                .helpText("The file path of the key store from where the key material is going to be read from to set-up TLS connections.")
+                .add()
+                .property()
+                .name("client-keystore-password")
+                .type("string")
+                .helpText("The key store password.")
+                .add()
+                .property()
+                .name("client-key-password")
+                .type("string")
+                .helpText("The key password.")
+                .defaultValue(-1L)
+                .add()
+                .property()
+                .name("disable-trust-manager")
+                .type("boolean")
+                .helpText("Disable trust management and hostname verification. NOTE this is a security hole, so only set this option if you cannot or do not want to verify the identity of the host you are communicating with.")
+                .defaultValue(false)
+                .add()
+                .property()
+                .name("proxy-mappings")
+                .type("string")
+                .helpText("Denotes the combination of a regex based hostname pattern and a proxy-uri in the form of hostnamePattern;proxyUri.")
+                .add()
+                .property()
+                .name(MAX_CONSUMED_RESPONSE_SIZE)
+                .type("long")
+                .helpText("Maximum size of a response consumed by the client (to prevent denial of service)")
+                .defaultValue(HttpClientProvider.DEFAULT_MAX_CONSUMED_RESPONSE_SIZE)
+                .add()
+                .build();
     }
 
     private boolean getBooleanConfigWithSysPropFallback(String key, boolean defaultValue) {

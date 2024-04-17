@@ -1,13 +1,12 @@
 /*
- * JBoss, Home of Professional Open Source.
- * Copyright 2016 Red Hat, Inc., and individual contributors
- * as indicated by the @author tags.
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,7 +16,13 @@
  */
 package org.keycloak.authorization.admin;
 
-import org.jboss.resteasy.annotations.cache.NoCache;
+import org.eclipse.microprofile.openapi.annotations.enums.SchemaType;
+import org.eclipse.microprofile.openapi.annotations.extensions.Extension;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.jboss.resteasy.reactive.NoCache;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.model.Policy;
 import org.keycloak.authorization.model.Resource;
@@ -29,31 +34,34 @@ import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.RealmModel;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
 import org.keycloak.services.ErrorResponse;
-import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
+import org.keycloak.services.resources.KeycloakOpenAPI;
 import org.keycloak.services.resources.admin.AdminEventBuilder;
+import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
 
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.keycloak.models.utils.ModelToRepresentation.toRepresentation;
 import static org.keycloak.models.utils.RepresentationToModel.toModel;
@@ -61,6 +69,7 @@ import static org.keycloak.models.utils.RepresentationToModel.toModel;
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
+@Extension(name = KeycloakOpenAPI.Profiles.ADMIN, value = "")
 public class ScopeService {
 
     private final AuthorizationProvider authorization;
@@ -92,15 +101,15 @@ public class ScopeService {
         return Response.status(Status.CREATED).entity(scope).build();
     }
 
-    @Path("{id}")
+    @Path("{scope-id}")
     @PUT
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response update(@PathParam("id") String id, ScopeRepresentation scope) {
+    public Response update(@PathParam("scope-id") String id, ScopeRepresentation scope) {
             this.auth.realm().requireManageAuthorization();
         scope.setId(id);
         StoreFactory storeFactory = authorization.getStoreFactory();
-        Scope model = storeFactory.getScopeStore().findById(scope.getId(), resourceServer.getId());
+        Scope model = storeFactory.getScopeStore().findById(resourceServer, scope.getId());
 
         if (model == null) {
             return Response.status(Status.NOT_FOUND).build();
@@ -113,25 +122,24 @@ public class ScopeService {
         return Response.noContent().build();
     }
 
-    @Path("{id}")
+    @Path("{scope-id}")
     @DELETE
-    public Response delete(@PathParam("id") String id) {
+    public Response delete(@PathParam("scope-id") String id) {
         this.auth.realm().requireManageAuthorization();
         StoreFactory storeFactory = authorization.getStoreFactory();
-        List<Resource> resources = storeFactory.getResourceStore().findByScope(Arrays.asList(id), resourceServer.getId());
-
-        if (!resources.isEmpty()) {
-            return ErrorResponse.error("Scopes can not be removed while associated with resources.", Status.BAD_REQUEST);
-        }
-
-        Scope scope = storeFactory.getScopeStore().findById(id, resourceServer.getId());
-
+        Scope scope = storeFactory.getScopeStore().findById(resourceServer, id);
         if (scope == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
+        List<Resource> resources = storeFactory.getResourceStore().findByScopes(resourceServer, Collections.singleton(scope));
+        if (!resources.isEmpty()) {
+            throw ErrorResponse.error("Scopes can not be removed while associated with resources.", Status.BAD_REQUEST);
+        }
+
+
         PolicyStore policyStore = storeFactory.getPolicyStore();
-        List<Policy> policies = policyStore.findByScopeIds(Arrays.asList(scope.getId()), resourceServer.getId());
+        List<Policy> policies = policyStore.findByScopes(resourceServer, Collections.singletonList(scope));
 
         for (Policy policyModel : policies) {
             if (policyModel.getScopes().size() == 1) {
@@ -141,20 +149,30 @@ public class ScopeService {
             }
         }
 
+        //to be able to access all lazy loaded fields it's needed to create representation before it's deleted
+        ScopeRepresentation scopeRep = toRepresentation(scope);
+
         storeFactory.getScopeStore().delete(id);
 
-        audit(toRepresentation(scope), OperationType.DELETE);
+        audit(scopeRep, OperationType.DELETE);
 
         return Response.noContent().build();
     }
 
-    @Path("{id}")
+    @Path("{scope-id}")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public Response findById(@PathParam("id") String id) {
+    @APIResponses(value = {
+        @APIResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = ScopeRepresentation.class))
+        ),
+        @APIResponse(responseCode = "404", description = "Not found")
+    })
+    public Response findById(@PathParam("scope-id") String id) {
         this.auth.realm().requireViewAuthorization();
-        Scope model = this.authorization.getStoreFactory().getScopeStore().findById(id, resourceServer.getId());
+        Scope model = this.authorization.getStoreFactory().getScopeStore().findById(resourceServer, id);
 
         if (model == null) {
             return Response.status(Status.NOT_FOUND).build();
@@ -163,20 +181,27 @@ public class ScopeService {
         return Response.ok(toRepresentation(model)).build();
     }
 
-    @Path("{id}/resources")
+    @Path("{scope-id}/resources")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getResources(@PathParam("id") String id) {
+    @APIResponses(value = {
+        @APIResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = ResourceRepresentation.class, type = SchemaType.ARRAY))
+        ),
+        @APIResponse(responseCode = "404", description = "Not found")
+    })
+    public Response getResources(@PathParam("scope-id") String id) {
         this.auth.realm().requireViewAuthorization();
         StoreFactory storeFactory = this.authorization.getStoreFactory();
-        Scope model = storeFactory.getScopeStore().findById(id, resourceServer.getId());
+        Scope model = storeFactory.getScopeStore().findById(resourceServer, id);
 
         if (model == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        return Response.ok(storeFactory.getResourceStore().findByScope(Arrays.asList(model.getId()), resourceServer.getId()).stream().map(resource -> {
+        return Response.ok(storeFactory.getResourceStore().findByScopes(resourceServer, Collections.singleton(model)).stream().map(resource -> {
             ResourceRepresentation representation = new ResourceRepresentation();
 
             representation.setId(resource.getId());
@@ -186,14 +211,21 @@ public class ScopeService {
         }).collect(Collectors.toList())).build();
     }
 
-    @Path("{id}/permissions")
+    @Path("{scope-id}/permissions")
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public Response getPermissions(@PathParam("id") String id) {
+    @APIResponses(value = {
+        @APIResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = PolicyRepresentation.class, type = SchemaType.ARRAY))
+        ),
+        @APIResponse(responseCode = "404", description = "Not found")
+    })
+    public Response getPermissions(@PathParam("scope-id") String id) {
         this.auth.realm().requireViewAuthorization();
         StoreFactory storeFactory = this.authorization.getStoreFactory();
-        Scope model = storeFactory.getScopeStore().findById(id, resourceServer.getId());
+        Scope model = storeFactory.getScopeStore().findById(resourceServer, id);
 
         if (model == null) {
             return Response.status(Status.NOT_FOUND).build();
@@ -201,7 +233,7 @@ public class ScopeService {
 
         PolicyStore policyStore = storeFactory.getPolicyStore();
 
-        return Response.ok(policyStore.findByScopeIds(Arrays.asList(model.getId()), resourceServer.getId()).stream().map(policy -> {
+        return Response.ok(policyStore.findByScopes(resourceServer, Collections.singletonList(model)).stream().map(policy -> {
             PolicyRepresentation representation = new PolicyRepresentation();
 
             representation.setId(policy.getId());
@@ -216,6 +248,14 @@ public class ScopeService {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @NoCache
+    @APIResponses(value = {
+        @APIResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = ScopeRepresentation.class, type = SchemaType.ARRAY))
+        ),
+        @APIResponse(responseCode = "204", description = "No Content"),
+        @APIResponse(responseCode = "400", description = "Bad Request")
+    })
     public Response find(@QueryParam("name") String name) {
         this.auth.realm().requireViewAuthorization();
         StoreFactory storeFactory = authorization.getStoreFactory();
@@ -224,7 +264,7 @@ public class ScopeService {
             return Response.status(Status.BAD_REQUEST).build();
         }
 
-        Scope model = storeFactory.getScopeStore().findByName(name, this.resourceServer.getId());
+        Scope model = storeFactory.getScopeStore().findByName(this.resourceServer, name);
 
         if (model == null) {
             return Response.status(Status.NO_CONTENT).build();
@@ -235,8 +275,8 @@ public class ScopeService {
 
     @GET
     @NoCache
-    @Produces("application/json")
-    public Response findAll(@QueryParam("scopeId") String id,
+    @Produces(MediaType.APPLICATION_JSON)
+    public Stream<ScopeRepresentation> findAll(@QueryParam("scopeId") String id,
                             @QueryParam("name") String name,
                             @QueryParam("first") Integer firstResult,
                             @QueryParam("max") Integer maxResult) {
@@ -252,11 +292,8 @@ public class ScopeService {
             search.put(Scope.FilterOption.NAME, new String[] {name});
         }
 
-        return Response.ok(
-                this.authorization.getStoreFactory().getScopeStore().findByResourceServer(search, this.resourceServer.getId(), firstResult != null ? firstResult : -1, maxResult != null ? maxResult : Constants.DEFAULT_MAX_RESULTS).stream()
-                        .map(scope -> toRepresentation(scope))
-                        .collect(Collectors.toList()))
-                .build();
+        return this.authorization.getStoreFactory().getScopeStore().findByResourceServer(this.resourceServer, search, firstResult != null ? firstResult : -1, maxResult != null ? maxResult : Constants.DEFAULT_MAX_RESULTS).stream()
+            .map(scope -> toRepresentation(scope));
     }
 
     private void audit(ScopeRepresentation resource, OperationType operation) {

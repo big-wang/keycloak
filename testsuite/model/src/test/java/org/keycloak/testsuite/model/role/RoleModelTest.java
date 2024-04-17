@@ -16,21 +16,28 @@ import org.keycloak.testsuite.model.RequireProvider;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
+import org.junit.Assume;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 
 @RequireProvider(RealmProvider.class)
 @RequireProvider(ClientProvider.class)
 @RequireProvider(RoleProvider.class)
 public class RoleModelTest extends KeycloakModelTest {
+
+    private static final String MAIN_ROLE_NAME = "main-role";
+    private static final String ROLE_PREFIX = "main-role-composite-";
+    private static final String CLIENT_NAME = "client-with-roles";
 
     private String realmId;
     private String mainRoleId;
@@ -38,7 +45,7 @@ public class RoleModelTest extends KeycloakModelTest {
 
     @Override
     public void createEnvironment(KeycloakSession s) {
-        RealmModel realm = s.realms().createRealm("realm");
+        RealmModel realm = createRealm(s, "realm");
         realm.setDefaultRole(s.roles().addRealmRole(realm, Constants.DEFAULT_ROLES_ROLE_PREFIX + "-" + realm.getName()));
         this.realmId = realm.getId();
 
@@ -57,15 +64,16 @@ public class RoleModelTest extends KeycloakModelTest {
 
 
     private void createRoles(KeycloakSession session, RealmModel realm) {
-        RoleModel mainRole = session.roles().addRealmRole(realm, "main-role");
+        RoleModel mainRole = session.roles().addRealmRole(realm, MAIN_ROLE_NAME);
         mainRoleId = mainRole.getId();
 
-        ClientModel clientModel = session.clients().addClient(realm, "client-with-roles");
+        ClientModel clientModel = session.clients().addClient(realm, CLIENT_NAME);
 
         // Create 10 realm roles that are composites of main role
         rolesSubset = IntStream.range(0, 10)
                 .boxed()
-                .map(i -> session.roles().addRealmRole(realm, "main-role-composite-" + i))
+                .map(i -> session.roles().addRealmRole(realm, ROLE_PREFIX + i))
+                .peek(role -> role.setDescription("This is a description for " + role.getName() + " realm role."))
                 .peek(mainRole::addCompositeRole)
                 .map(RoleModel::getId)
                 .collect(Collectors.toList());
@@ -73,7 +81,8 @@ public class RoleModelTest extends KeycloakModelTest {
         // Create 10 client roles that are composites of main role
         rolesSubset.addAll(IntStream.range(10, 20)
                 .boxed()
-                .map(i -> session.roles().addClientRole(clientModel, "main-role-composite-" + i))
+                .map(i -> session.roles().addClientRole(clientModel, ROLE_PREFIX + i))
+                .peek(role -> role.setDescription("This is a description for " + role.getName() + " client role."))
                 .peek(mainRole::addCompositeRole)
                 .map(RoleModel::getId)
                 .collect(Collectors.toList()));
@@ -202,6 +211,97 @@ public class RoleModelTest extends KeycloakModelTest {
         testRolesWithIdsPaginationSearchQueries(this::getModelResult);
     }
 
+    @Test
+    public void testSearchRolesByDescription() {
+        withRealm(realmId, (session, realm) -> {
+            List<RoleModel> realmRolesByDescription = session.roles().searchForRolesStream(realm, "This is a", null, null).collect(Collectors.toList());
+            assertThat(realmRolesByDescription, hasSize(10));
+            realmRolesByDescription = session.roles().searchForRolesStream(realm, "realm role.", 5, null).collect(Collectors.toList());
+            assertThat(realmRolesByDescription, hasSize(5));
+            realmRolesByDescription = session.roles().searchForRolesStream(realm, "DESCRIPTION FOR", 3, 9).collect(Collectors.toList());
+            assertThat(realmRolesByDescription, hasSize(7));
+
+            ClientModel client = session.clients().getClientByClientId(realm, CLIENT_NAME);
+
+            List<RoleModel> clientRolesByDescription = session.roles().searchForClientRolesStream(client, "this is a", 0, 10).collect(Collectors.toList());
+            assertThat(clientRolesByDescription, hasSize(10));
+
+            clientRolesByDescription = session.roles().searchForClientRolesStream(client, "role-composite-13 client role", null, null).collect(Collectors.toList());
+            assertThat(clientRolesByDescription, hasSize(1));
+            assertThat(clientRolesByDescription.get(0).getDescription(), is("This is a description for main-role-composite-13 client role."));
+
+            return null;
+        });
+    }
+
+    @Test
+    public void testCompositeRolesUpdateOnChildRoleRemoval() {
+        final AtomicReference<String> parentRealmRoleId = new AtomicReference<>();
+        final AtomicReference<String> parentClientRoleId = new AtomicReference<>();
+
+        final AtomicReference<String> childRealmRoleId = new AtomicReference<>();
+        final AtomicReference<String> childClientRoleId = new AtomicReference<>();
+
+        withRealm(realmId, (session, realm) -> {
+            // Create realm role
+            RoleModel parentRealmRole = session.roles().addRealmRole(realm, "parentRealmRole");
+            parentRealmRoleId.set(parentRealmRole.getId());
+
+            // Create client role
+            ClientModel client = session.clients().addClient(realm,"clientWithRole");
+
+            RoleModel parentClientRole = session.roles().addClientRole(client, "parentClientRole");
+            parentClientRoleId.set(parentClientRole.getId());
+
+            // Create realm child role
+            RoleModel childRealmRole = session.roles().addRealmRole(realm, "childRealmRole");
+            childRealmRoleId.set(childRealmRole.getId());
+
+            RoleModel childClientRole = session.roles().addClientRole(client, "childClientRole");
+            childClientRoleId.set(childClientRole.getId());
+
+            // Add composites
+            parentRealmRole.addCompositeRole(childRealmRole);
+            parentRealmRole.addCompositeRole(childClientRole);
+
+            parentClientRole.addCompositeRole(childRealmRole);
+            parentClientRole.addCompositeRole(childClientRole);
+            return null;
+        });
+
+        withRealm(realmId, (session, realm) -> {
+            RoleModel parentRealmRole = session.roles().getRoleById(realm, parentRealmRoleId.get());
+            RoleModel parentClientRole = session.roles().getRoleById(realm, parentClientRoleId.get());
+            assertThat(parentRealmRole.getCompositesStream().collect(Collectors.toSet()), hasSize(2));
+            assertThat(parentClientRole.getCompositesStream().collect(Collectors.toSet()), hasSize(2));
+
+            session.roles().removeRole(session.roles().getRoleById(realm, childRealmRoleId.get()));
+            session.roles().removeRole(session.roles().getRoleById(realm, childClientRoleId.get()));
+            return null;
+        });
+
+        withRealm(realmId, (session, realm) -> {
+            RoleModel parentRealmRole = session.roles().getRoleById(realm, parentRealmRoleId.get());
+            RoleModel parentClientRole = session.roles().getRoleById(realm, parentClientRoleId.get());
+            assertThat(parentRealmRole.getCompositesStream().collect(Collectors.toSet()), empty());
+            assertThat(parentClientRole.getCompositesStream().collect(Collectors.toSet()), empty());
+            return null;
+        });
+    }
+
+    @Test
+    public void getRolePathTraversal() {
+        // Only perform this test if realm role ID = role.name and client role ID = client.id + ":" + role.name
+        Assume.assumeThat(mainRoleId, is(MAIN_ROLE_NAME));
+        Assume.assumeTrue(rolesSubset.stream().anyMatch((CLIENT_NAME + ":" + ROLE_PREFIX + "10")::equals));
+
+        withRealm(realmId, (session, realm) -> {
+            RoleModel role = session.roles().getRoleById(realm, (CLIENT_NAME + ":" + ROLE_PREFIX + "10") + "/../../" + MAIN_ROLE_NAME);
+            assertThat(role, nullValue());
+            return null;
+        });
+    }
+
     public void testRolesWithIdsPaginationSearchQueries(GetResult resultProvider) {
         // test all parameters together
         List<RoleModel> result = resultProvider.getResult("1", 4, 3);
@@ -210,6 +310,6 @@ public class RoleModelTest extends KeycloakModelTest {
     }
 
     private void assertIndexValues(List<RoleModel> roles, Matcher<? super Collection<? extends Integer>> matcher) {
-        assertThat(roles.stream().map(RoleModel::getName).map(s -> s.substring("main-role-composite-".length())).map(Integer::parseInt).collect(Collectors.toList()), matcher);
+        assertThat(roles.stream().map(RoleModel::getName).map(s -> s.substring(ROLE_PREFIX.length())).map(Integer::parseInt).collect(Collectors.toList()), matcher);
     }
 }

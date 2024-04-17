@@ -45,6 +45,12 @@ public class JsonConfigProvider implements Config.ConfigProvider {
     }
 
     @Override
+    public String getDefaultProvider(String spi) {
+        JsonNode n = getNode(config, spi, "provider-default");
+        return n != null ? replaceProperties(n.textValue()) : null;
+    }
+
+    @Override
     public Config.Scope scope(String... path) {
         return new JsonScope(getNode(config, path));
     }
@@ -129,7 +135,7 @@ public class JsonConfigProvider implements Config.ConfigProvider {
             }
             if (n.isTextual()) {
                 String v = replaceProperties(n.textValue());
-                return !v.isEmpty() ? Integer.parseInt(v) : defaultValue;
+                return !v.isEmpty() ? Integer.valueOf(v) : defaultValue;
             } else {
                 return n.intValue();
             }
@@ -151,7 +157,7 @@ public class JsonConfigProvider implements Config.ConfigProvider {
             }
             if (n.isTextual()) {
                 String v = replaceProperties(n.textValue());
-                return !v.isEmpty() ? Long.parseLong(v) : defaultValue;
+                return !v.isEmpty() ? Long.valueOf(v) : defaultValue;
             } else {
                 return n.longValue();
             }
@@ -173,7 +179,7 @@ public class JsonConfigProvider implements Config.ConfigProvider {
             }
             if (n.isTextual()) {
                 String v = replaceProperties(n.textValue());
-                return !v.isEmpty() ? Boolean.parseBoolean(v) : defaultValue;
+                return !v.isEmpty() ? Boolean.valueOf(v) : defaultValue;
             } else {
                 return n.booleanValue();
             }

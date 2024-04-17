@@ -1,19 +1,32 @@
 package org.keycloak.testsuite.broker;
 
+import org.apache.commons.lang3.StringUtils;
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
+import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.Assert;
+import org.keycloak.testsuite.forms.RegisterWithUserProfileTest;
+import org.keycloak.testsuite.forms.VerifyProfileTest;
 import org.keycloak.testsuite.pages.LoginUpdateProfilePage;
+import org.keycloak.testsuite.pages.RegisterPage;
+import org.keycloak.testsuite.pages.AppPage;
+import org.keycloak.testsuite.util.AccountHelper;
+import org.keycloak.testsuite.util.ClientScopeBuilder;
+import org.openqa.selenium.By;
 import org.openqa.selenium.NoSuchElementException;
 
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.keycloak.testsuite.admin.ApiUtil.removeUserByUsername;
 import static org.keycloak.testsuite.broker.BrokerTestTools.waitForPage;
-import static org.keycloak.testsuite.broker.BrokerTestTools.getConsumerRoot;
+import static org.keycloak.testsuite.forms.VerifyProfileTest.ATTRIBUTE_DEPARTMENT;
+import static org.keycloak.testsuite.forms.VerifyProfileTest.PERMISSIONS_ADMIN_EDITABLE;
+import static org.keycloak.testsuite.forms.VerifyProfileTest.PERMISSIONS_ALL;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -22,6 +35,12 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
 
     @Page
     protected LoginUpdateProfilePage loginUpdateProfilePage;
+
+    @Page
+    protected AppPage appPage;
+
+    @Page
+    protected RegisterPage registerPage;
 
     @Override
     protected BrokerConfiguration getBrokerConfiguration() {
@@ -41,14 +60,16 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
         String username = "firstandlastname";
         createUser(bc.providerRealmName(), username, BrokerTestConstants.USER_PASSWORD, firstname, lastname, "firstnamelastname@example.org");
 
-        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
         logInWithIdp(bc.getIDPAlias(), username, BrokerTestConstants.USER_PASSWORD);
 
-        accountUpdateProfilePage.assertCurrent();
+        UserRepresentation userRepresentation = AccountHelper.getUserRepresentation(adminClient.realm(bc.consumerRealmName()), username);
 
-        assertEquals(username, accountUpdateProfilePage.getUsername());
-        assertEquals(firstname, accountUpdateProfilePage.getFirstName());
-        assertEquals(lastname, accountUpdateProfilePage.getLastName());
+        assertEquals(username, userRepresentation.getUsername());
+        assertEquals(firstname, userRepresentation.getFirstName());
+        assertEquals(lastname, userRepresentation.getLastName());
     }
 
     /**
@@ -67,12 +88,16 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
             adminClient.realm(bc.providerRealmName()).clients().create(samlClient);
             consumerRealm.identityProviders().create(samlBroker);
 
-            driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             logInWithBroker(samlBrokerConfig);
-            waitForAccountManagementTitle();
-            accountUpdateProfilePage.assertCurrent();
-            logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
+            Assert.assertTrue(appPage.isCurrent());
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+            AccountHelper.logout(adminClient.realm(bc.providerRealmName()), bc.getUserLogin());
+
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             logInWithBroker(bc);
 
@@ -91,8 +116,6 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
 
             log.debug("Clicking social " + samlBrokerConfig.getIDPAlias());
             loginPage.clickSocial(samlBrokerConfig.getIDPAlias());
-            waitForAccountManagementTitle();
-            accountUpdateProfilePage.assertCurrent();
 
             assertNumFederatedIdentities(consumerRealm.users().search(samlBrokerConfig.getUserLogin()).get(0).getId(), 2);
         } finally {
@@ -122,12 +145,16 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
             consumerRealm.identityProviders().create(samlBroker);
             consumerRealm.identityProviders().create(oidcBroker);
 
-            driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             logInWithBroker(samlBrokerConfig);
-            waitForAccountManagementTitle();
-            accountUpdateProfilePage.assertCurrent();
-            logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
+            appPage.assertCurrent();
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+            AccountHelper.logout(adminClient.realm(bc.providerRealmName()), bc.getUserLogin());
+
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             logInWithBroker(bc);
 
@@ -151,8 +178,6 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
 
             log.debug("Clicking social " + samlBrokerConfig.getIDPAlias());
             loginPage.clickSocial(samlBrokerConfig.getIDPAlias());
-            waitForAccountManagementTitle();
-            accountUpdateProfilePage.assertCurrent();
 
             assertNumFederatedIdentities(consumerRealm.users().search(samlBrokerConfig.getUserLogin()).get(0).getId(), 2);
         } finally {
@@ -177,7 +202,8 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
             adminClient.realm(bc.providerRealmName()).clients().create(samlClient);
             consumerRealm.identityProviders().create(samlBroker);
 
-            driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             createUser(bc.getUserLogin());
 
@@ -222,11 +248,17 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
             adminClient.realm(bc.providerRealmName()).clients().create(samlClient);
             consumerRealm.identityProviders().create(samlBroker);
 
-            driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
+
             logInWithBroker(samlBrokerConfig);
             waitForPage(driver, "update account information", false);
             updateAccountInformationPage.updateAccountInformation("FirstName", "LastName");
-            logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+            AccountHelper.logout(adminClient.realm(bc.providerRealmName()), bc.getUserLogin());
+
+            oauth.clientId("broker-app");
+            loginPage.open(bc.consumerRealmName());
 
             logInWithBroker(bc);
 
@@ -237,8 +269,6 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
             // User is federated after log in with the original broker
             log.debug("Clicking social " + samlBrokerConfig.getIDPAlias());
             loginPage.clickSocial(samlBrokerConfig.getIDPAlias());
-            waitForAccountManagementTitle();
-            accountUpdateProfilePage.assertCurrent();
 
             assertNumFederatedIdentities(consumerRealm.users().search(samlBrokerConfig.getUserLogin()).get(0).getId(), 1);
         } finally {
@@ -251,8 +281,12 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
     public void testEditUsername() {
         updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
 
-        createUser(bc.providerRealmName(), "no-first-name", "password", null, "LastName", "no-first-name@localhost.com");
-        driver.navigate().to(getAccountUrl(getConsumerRoot(), bc.consumerRealmName()));
+        createUser(bc.providerRealmName(), "no-first-name", "password", null,
+                "LastName", "no-first-name@localhost.com");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
         log.debug("Clicking social " + bc.getIDPAlias());
         loginPage.clickSocial(bc.getIDPAlias());
         waitForPage(driver, "sign in to", true);
@@ -269,12 +303,431 @@ public class KcOidcFirstBrokerLoginTest extends AbstractFirstBrokerLoginTest {
         assertEquals("Please specify username.", loginUpdateProfilePage.getInputErrors().getUsernameError());
         
         updateAccountInformationPage.updateAccountInformation("new-username", "no-first-name@localhost.com", "First Name", "Last Name");
-        waitForAccountManagementTitle();
-        accountUpdateProfilePage.assertCurrent();
-        Assert.assertEquals("First Name", accountUpdateProfilePage.getFirstName());
-        Assert.assertEquals("Last Name", accountUpdateProfilePage.getLastName());
-        Assert.assertEquals("no-first-name@localhost.com", accountUpdateProfilePage.getEmail());
-        Assert.assertEquals("new-username", accountUpdateProfilePage.getUsername());
 
+        UserRepresentation userRepresentation = AccountHelper.getUserRepresentation(adminClient.realm(bc.consumerRealmName()), "new-username");
+
+        Assert.assertEquals("First Name", userRepresentation.getFirstName());
+        Assert.assertEquals("Last Name", userRepresentation.getLastName());
+        Assert.assertEquals("no-first-name@localhost.com", userRepresentation.getEmail());
+
+    }
+
+    @Test
+    public void shouldOfferOidcOptionOnLoginPageAfterUserTriedToLogInButDecidedNotTo() {
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        final var realmRepresentation = adminClient.realm(bc.consumerRealmName()).toRepresentation();
+        realmRepresentation.setRegistrationAllowed(true);
+        adminClient.realm(bc.consumerRealmName()).update(realmRepresentation);
+
+        createUser(bc.providerRealmName(), "idp-cancel-test", "password", "IDP", "Cancel", "idp-cancel@localhost.com");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        loginPage.clickRegister();
+        registerPage.clickBackToLogin();
+
+        String urlWhenBackFromRegistrationPage = driver.getCurrentUrl();
+
+        log.debug("Clicking social " + bc.getIDPAlias());
+        loginPage.clickSocial(bc.getIDPAlias());
+        waitForPage(driver, "sign in to", true);
+        Assert.assertTrue("Driver should be on the provider realm page right now",
+            driver.getCurrentUrl().contains("/auth/realms/" + bc.providerRealmName() + "/"));
+        log.debug("Logging in");
+        loginPage.login("idp-cancel-test", "password");
+
+        waitForPage(driver, "update account information", false);
+        driver.navigate().back();
+        driver.navigate().back();
+        log.debug("Went back to the login screen.");
+        String urlWhenWentBackFromIdpLogin = driver.getCurrentUrl();
+
+        assertEquals(urlWhenBackFromRegistrationPage, urlWhenWentBackFromIdpLogin);
+
+        log.debug("Should not fail here... We're still not logged in, so the IDP should be shown on the login page.");
+        assertTrue("We should be on the login page.", driver.getPageSource().contains("Sign in to your account"));
+        final var socialButton = this.loginPage.findSocialButton(bc.getIDPAlias());
+    }
+
+
+    @Test
+    public void testDisplayName() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\",\"displayName\":\"${firstName}\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", \"displayName\" : \"Department\", " + PERMISSIONS_ALL + ", \"required\":{}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        //assert field names
+        // i18n replaced
+        org.junit.Assert.assertEquals("First name", updateAccountInformationPage.getLabelForField("firstName"));
+        // attribute name used if no display name set
+        org.junit.Assert.assertEquals("lastName", updateAccountInformationPage.getLabelForField("lastName"));
+        // direct value in display name
+        org.junit.Assert.assertEquals("Department", updateAccountInformationPage.getLabelForField("department"));
+    }
+
+    @Test
+    public void testAttributeGrouping() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"lastName\"," + VerifyProfileTest.PERMISSIONS_ALL + "},"
+                + "{\"name\": \"username\", " + VerifyProfileTest.PERMISSIONS_ALL + "},"
+                + "{\"name\": \"firstName\"," + VerifyProfileTest.PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"department\", " + VerifyProfileTest.PERMISSIONS_ALL + ", \"required\":{}, \"group\": \"company\"},"
+                + "{\"name\": \"email\", " + VerifyProfileTest.PERMISSIONS_ALL + ", \"group\": \"contact\"}"
+                + "], \"groups\": ["
+                + "{\"name\": \"company\", \"displayDescription\": \"Company field desc\" },"
+                + "{\"name\": \"contact\" }"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        //assert fields location in form
+        String htmlFormId = "kc-idp-review-profile-form";
+
+        //assert fields and groups location in form, attributes without a group appear first
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(1) > div:nth-child(2) > input#lastName")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(2) > div:nth-child(2) > input#username")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(3) > div:nth-child(2) > input#firstName")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(4) > div:nth-child(1) > label#header-company")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(4) > div:nth-child(2) > label#description-company")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(5) > div:nth-child(2) > input#department")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(6) > div:nth-child(1) > label#header-contact")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(7) > div:nth-child(2) > input#email")
+                ).isDisplayed()
+        );
+    }
+
+    @Test
+    public void testAttributeGuiOrder() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"lastName\"," + VerifyProfileTest.PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", " + VerifyProfileTest.PERMISSIONS_ALL + ", \"required\":{}},"
+                + "{\"name\": \"username\", " + VerifyProfileTest.PERMISSIONS_ALL + "},"
+                + "{\"name\": \"firstName\"," + VerifyProfileTest.PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"email\", " + VerifyProfileTest.PERMISSIONS_ALL + "}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        //assert fields location in form
+        String htmlFormId = "kc-idp-review-profile-form";
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(1) > div:nth-child(2) > input#lastName")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(2) > div:nth-child(2) > input#department")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(3) > div:nth-child(2) > input#username")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(4) > div:nth-child(2) > input#firstName")
+                ).isDisplayed()
+        );
+        org.junit.Assert.assertTrue(
+                driver.findElement(
+                        By.cssSelector("form#"+htmlFormId+" > div:nth-child(5) > div:nth-child(2) > input#email")
+                ).isDisplayed()
+        );
+    }
+
+    @Test
+    public void testAttributeInputTypes() {
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + RegisterWithUserProfileTest.UP_CONFIG_PART_INPUT_TYPES
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        RegisterWithUserProfileTest.assertFieldTypes(driver);
+    }
+
+    @Test
+    public void testDynamicUserProfileReviewWhenMissing_requiredReadOnlyAttributeDoesnotForceUpdate() {
+
+        updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", " + PERMISSIONS_ADMIN_EDITABLE + ", \"required\":{}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+    }
+
+    @Test
+    public void testDynamicUserProfileReviewWhenMissing_requiredButNotSelectedByScopeAttributeDoesnotForceUpdate() {
+
+        addDepartmentScopeIntoRealm();
+
+        updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", " + PERMISSIONS_ALL + ", \"required\":{}, \"selector\":{\"scopes\":[\"department\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+    }
+
+    @Test
+    public void testDynamicUserProfileReviewWhenMissing_requiredAndSelectedByScopeAttributeForcesUpdate() {
+
+        updateExecutions(AbstractBrokerTest::setUpMissingUpdateProfileOnFirstLogin);
+
+        //we use 'profile' scope which is requested by default
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", " + PERMISSIONS_ALL + ", \"required\":{}, \"selector\":{\"scopes\":[\"profile\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+    }
+
+    @Test
+    public void testDynamicUserProfileReview_requiredReadOnlyAttributeNotRenderedAndNotBlockingProcess() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\", " + PERMISSIONS_ADMIN_EDITABLE + ", \"required\":{}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        org.junit.Assert.assertFalse(updateAccountInformationPage.isDepartmentPresent());
+
+        updateAccountInformationPage.updateAccountInformation( "requiredReadOnlyAttributeNotRenderedAndNotBlockingRegistration", "requiredReadOnlyAttributeNotRenderedAndNotBlockingRegistration@email", "FirstAA", "LastAA");
+    }
+
+    @Test
+    public void testDynamicUserProfileReview_attributeRequiredAndSelectedByScopeMustBeSet() {
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        //we use 'profile' scope which is requested by default
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + "},"
+                + "{\"name\": \"department\"," + PERMISSIONS_ALL + ", \"required\":{}, \"selector\":{\"scopes\":[\"profile\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        //check required validation works
+        updateAccountInformationPage.updateAccountInformation( "attributeRequiredAndSelectedByScopeMustBeSet", "attributeRequiredAndSelectedByScopeMustBeSet@email", "FirstAA", "LastAA", "");
+        updateAccountInformationPage.assertCurrent();
+
+        updateAccountInformationPage.updateAccountInformation( "attributeRequiredAndSelectedByScopeMustBeSet", "attributeRequiredAndSelectedByScopeMustBeSet@email", "FirstAA", "LastAA", "DepartmentAA");
+
+        UserRepresentation user = VerifyProfileTest.getUserByUsername(testRealm(),"attributeRequiredAndSelectedByScopeMustBeSet");
+        assertEquals("FirstAA", user.getFirstName());
+        assertEquals("LastAA", user.getLastName());
+        assertEquals("DepartmentAA", user.firstAttribute(ATTRIBUTE_DEPARTMENT));
+    }
+
+    @Test
+    public void testDynamicUserProfileReview_attributeNotRequiredAndSelectedByScopeCanBeIgnored() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        //we use 'profile' scope which is requested by default
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"department\"," + PERMISSIONS_ALL + ", \"selector\":{\"scopes\":[\"profile\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        org.junit.Assert.assertTrue(updateAccountInformationPage.isDepartmentPresent());
+        updateAccountInformationPage.updateAccountInformation( "attributeNotRequiredAndSelectedByScopeCanBeIgnored", "attributeNotRequiredAndSelectedByScopeCanBeIgnored@email", "FirstAA", "LastAA");
+
+        UserRepresentation user = VerifyProfileTest.getUserByUsername(testRealm(),"attributeNotRequiredAndSelectedByScopeCanBeIgnored");
+        assertEquals("FirstAA", user.getFirstName());
+        assertEquals("LastAA", user.getLastName());
+        assertThat(StringUtils.isEmpty(user.firstAttribute(ATTRIBUTE_DEPARTMENT)), is(true));
+    }
+
+    @Test
+    public void testDynamicUserProfileReview_attributeNotRequiredAndSelectedByScopeCanBeSet() {
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        //we use 'profile' scope which is requested by default
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"department\"," + PERMISSIONS_ALL + ", \"selector\":{\"scopes\":[\"profile\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        org.junit.Assert.assertTrue(updateAccountInformationPage.isDepartmentPresent());
+        updateAccountInformationPage.updateAccountInformation( "attributeNotRequiredAndSelectedByScopeCanBeSet", "attributeNotRequiredAndSelectedByScopeCanBeSet@email", "FirstAA", "LastAA","Department AA");
+
+        UserRepresentation user = VerifyProfileTest.getUserByUsername(testRealm(),"attributeNotRequiredAndSelectedByScopeCanBeSet");
+        assertEquals("FirstAA", user.getFirstName());
+        assertEquals("LastAA", user.getLastName());
+        assertEquals("Department AA", user.firstAttribute(ATTRIBUTE_DEPARTMENT));
+    }
+
+    @Test
+    public void testDynamicUserProfileReview_attributeRequiredButNotSelectedByScopeIsNotRenderedAndNotBlockingProcess() {
+
+        addDepartmentScopeIntoRealm();
+
+        updateExecutions(AbstractBrokerTest::enableUpdateProfileOnFirstLogin);
+
+        setUserProfileConfiguration("{\"attributes\": ["
+                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
+                + "{\"name\": \"department\"," + PERMISSIONS_ALL + ", \"required\":{}, \"selector\":{\"scopes\":[\"department\"]}}"
+                + "]}");
+
+        oauth.clientId("broker-app");
+        loginPage.open(bc.consumerRealmName());
+
+        logInWithBroker(bc);
+
+        waitForPage(driver, "update account information", false);
+        updateAccountInformationPage.assertCurrent();
+
+        org.junit.Assert.assertFalse(updateAccountInformationPage.isDepartmentPresent());
+        updateAccountInformationPage.updateAccountInformation( "attributeRequiredButNotSelectedByScopeIsNotRenderedAndNotBlockingRegistration", "attributeRequiredButNotSelectedByScopeIsNotRenderedAndNotBlockingRegistration@email", "FirstAA", "LastAA");
+
+        UserRepresentation user = VerifyProfileTest.getUserByUsername(testRealm(),"attributeRequiredButNotSelectedByScopeIsNotRenderedAndNotBlockingRegistration");
+        assertEquals("FirstAA", user.getFirstName());
+        assertEquals("LastAA", user.getLastName());
+        assertEquals(null, user.firstAttribute(ATTRIBUTE_DEPARTMENT));
+    }
+
+    public void addDepartmentScopeIntoRealm() {
+        testRealm().clientScopes().create(ClientScopeBuilder.create().name("department").protocol("openid-connect").build());
+    }
+
+    protected void setUserProfileConfiguration(String configuration) {
+        VerifyProfileTest.setUserProfileConfiguration(testRealm(), configuration);
+    }
+
+    private RealmResource testRealm() {
+        return adminClient.realm(bc.consumerRealmName());
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@ import org.keycloak.models.jpa.JpaModel;
 import org.keycloak.representations.idm.authorization.DecisionStrategy;
 import org.keycloak.representations.idm.authorization.Logic;
 
-import javax.persistence.EntityManager;
+import jakarta.persistence.EntityManager;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -168,8 +168,9 @@ public class PolicyAdapter extends AbstractAuthorizationModel implements Policy,
     @Override
     public Set<Resource> getResources() {
         Set<Resource> set = new HashSet<>();
+        ResourceServer resourceServer = getResourceServer();
         for (ResourceEntity res : entity.getResources()) {
-            set.add(storeFactory.getResourceStore().findById(res.getId(), entity.getResourceServer().getId()));
+            set.add(storeFactory.getResourceStore().findById(resourceServer, res.getId()));
         }
         return Collections.unmodifiableSet(set);
     }
@@ -177,8 +178,9 @@ public class PolicyAdapter extends AbstractAuthorizationModel implements Policy,
     @Override
     public Set<Scope> getScopes() {
         Set<Scope> set = new HashSet<>();
+        ResourceServer resourceServer = getResourceServer();
         for (ScopeEntity res : entity.getScopes()) {
-            set.add(storeFactory.getScopeStore().findById(res.getId(), entity.getResourceServer().getId()));
+            set.add(storeFactory.getScopeStore().findById(resourceServer, res.getId()));
         }
         return Collections.unmodifiableSet(set);
     }

@@ -12,6 +12,7 @@ import java.util.concurrent.TimeoutException;
 import javax.management.MBeanServerConnection;
 import javax.management.ObjectName;
 
+import com.google.common.base.Strings;
 import org.jboss.arquillian.container.osgi.jmx.JMXDeployableContainer;
 import org.jboss.arquillian.container.osgi.jmx.ObjectNameFactory;
 import org.jboss.arquillian.container.osgi.karaf.managed.KarafManagedContainerConfiguration;
@@ -32,6 +33,8 @@ public class CustomFuseContainer<T extends KarafManagedContainerConfiguration> e
 
     private KarafManagedContainerConfiguration config;
     private Process process;
+
+    private static final String fuseAdapterVersion = System.getProperty("fuse.adapter.version");
 
     @Override
     public Class<T> getConfigurationClass() {
@@ -73,7 +76,10 @@ public class CustomFuseContainer<T extends KarafManagedContainerConfiguration> e
             if (!karafHomeDir.isDirectory())
                 throw new IllegalStateException("Not a valid Karaf home dir: " + karafHomeDir);
 
-            String java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+            String java = System.getProperty("app.server.java.home") + File.separator + "bin" + File.separator + "java";
+            if (Strings.isNullOrEmpty(java)) {
+                java = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java";
+            }
             log.infof("Using java: %s", java);
 
             List<String> cmd = new ArrayList<>();
@@ -95,6 +101,7 @@ public class CustomFuseContainer<T extends KarafManagedContainerConfiguration> e
             cmd.add("-Dkaraf.restart.jvm.supported=true");
             cmd.add("-Dkaraf.startLocalConsole=false");
             cmd.add("-Dkaraf.startRemoteShell=true");
+            cmd.add("-Dfuse.adapter.version=" + fuseAdapterVersion);
 
             // Java properties
             cmd.add("-Djava.io.tmpdir=" + new File(karafHomeDir, "data/tmp"));

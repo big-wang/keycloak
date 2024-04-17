@@ -17,10 +17,13 @@
 
 package org.keycloak.testsuite.model.session;
 
+import org.hamcrest.Matchers;
 import org.infinispan.Cache;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.keycloak.common.Profile;
 import org.keycloak.connections.infinispan.InfinispanConnectionProvider;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
@@ -33,7 +36,6 @@ import org.keycloak.models.UserProvider;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.UserSessionProvider;
 import org.keycloak.models.session.UserSessionPersisterProvider;
-import org.keycloak.models.sessions.infinispan.InfinispanUserSessionProviderFactory;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -66,7 +68,7 @@ public class UserSessionInitializerTest extends KeycloakModelTest {
 
     @Override
     public void createEnvironment(KeycloakSession s) {
-        RealmModel realm = s.realms().createRealm("test");
+        RealmModel realm = createRealm(s, "test");
         realm.setOfflineSessionIdleTimeout(Constants.DEFAULT_OFFLINE_SESSION_IDLE_TIMEOUT);
         realm.setDefaultRole(s.roles().addRealmRole(realm, Constants.DEFAULT_ROLES_ROLE_PREFIX + "-" + realm.getName()));
         realm.setSsoSessionIdleTimeout(1800);
@@ -155,8 +157,10 @@ public class UserSessionInitializerTest extends KeycloakModelTest {
     }
 
     @Test
-    @RequireProvider(value = UserSessionProvider.class, only = InfinispanUserSessionProviderFactory.PROVIDER_ID)
     public void testUserSessionPropagationBetweenSites() throws InterruptedException {
+        // When user sessions are not stored in the cache, this test doesn't make sense
+        Assume.assumeThat(Profile.isFeatureEnabled(Profile.Feature.PERSISTENT_USER_SESSIONS_NO_CACHE), Matchers.not(true));
+
         AtomicInteger index = new AtomicInteger();
         AtomicReference<String> userSessionId = new AtomicReference<>();
         AtomicReference<List<Boolean>> containsSession = new AtomicReference<>(new LinkedList<>());
@@ -165,13 +169,13 @@ public class UserSessionInitializerTest extends KeycloakModelTest {
 
         Optional<HotRodServerRule> hotRodServer = getParameters(HotRodServerRule.class).findFirst();
 
-        inIndependentFactories(4, 300, () -> {
+        inIndependentFactories(4, 60, () -> {
             synchronized (lock) {
                 if (index.incrementAndGet() == 1) {
                     // create a user session in the first node
                     UserSessionModel userSessionModel = withRealm(realmId, (session, realm) -> {
                         final UserModel user = session.users().getUserByUsername(realm, "user1");
-                        return session.sessions().createUserSession(realm, user, "un1", "ip1", "auth", false, null, null);
+                        return session.sessions().createUserSession(null, realm, user, "un1", "ip1", "auth", false, null, null, UserSessionModel.SessionPersistenceState.PERSISTENT);
                     });
                     userSessionId.set(userSessionModel.getId());
                 } else {

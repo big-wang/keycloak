@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,15 @@
  */
 package org.keycloak.services.resources.account.resources;
 
-import javax.ws.rs.BadRequestException;
-import javax.ws.rs.GET;
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Link;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Link;
+import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
@@ -34,7 +34,7 @@ import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.jboss.resteasy.spi.HttpRequest;
+import org.keycloak.http.HttpRequest;
 import org.keycloak.authorization.model.PermissionTicket;
 import org.keycloak.authorization.store.PermissionTicketStore;
 import org.keycloak.common.util.KeycloakUriBuilder;
@@ -73,7 +73,7 @@ public class ResourcesService extends AbstractResourceService {
             filters.put(org.keycloak.authorization.model.Resource.FilterOption.NAME, new String[] { name });
         }
 
-        return queryResponse((f, m) -> resourceStore.findByResourceServer(filters, null, f, m).stream()
+        return queryResponse((f, m) -> resourceStore.find(null, filters, f, m).stream()
                 .map(resource -> new Resource(resource, user, provider)), first, max);
     }
 
@@ -123,7 +123,7 @@ public class ResourcesService extends AbstractResourceService {
         filters.put(PermissionTicket.FilterOption.REQUESTER, user.getId());
         filters.put(PermissionTicket.FilterOption.GRANTED, Boolean.FALSE.toString());
 
-        final List<PermissionTicket> permissionTickets = ticketStore.find(filters, null, -1, -1);
+        final List<PermissionTicket> permissionTickets = ticketStore.find(null, filters, null, null);
 
         final List<ResourcePermission> resourceList = new ArrayList<>(permissionTickets.size());
         for (PermissionTicket ticket : permissionTickets) {
@@ -138,7 +138,7 @@ public class ResourcesService extends AbstractResourceService {
 
     @Path("{id}")
     public Object getResource(@PathParam("id") String id) {
-        org.keycloak.authorization.model.Resource resource = resourceStore.findById(id, null);
+        org.keycloak.authorization.model.Resource resource = resourceStore.findById(null, id);
 
         if (resource == null) {
             throw new NotFoundException("resource_not_found");
@@ -167,9 +167,9 @@ public class ResourcesService extends AbstractResourceService {
                 filters.put(PermissionTicket.FilterOption.GRANTED, Boolean.TRUE.toString());
                 filters.put(PermissionTicket.FilterOption.RESOURCE_ID, resource.getId());
 
-                tickets = ticketStore.find(filters, null, -1, -1);
+                tickets = ticketStore.find(resource.getResourceServer(), filters, null, null);
             } else {
-                tickets = ticketStore.findGranted(resource.getName(), user.getId(), null);
+                tickets = ticketStore.findGranted(resource.getResourceServer(), resource.getName(), user.getId());
             }
 
             for (PermissionTicket ticket : tickets) {

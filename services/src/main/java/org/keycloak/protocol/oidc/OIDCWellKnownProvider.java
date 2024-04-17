@@ -17,10 +17,11 @@
 
 package org.keycloak.protocol.oidc;
 
-import com.google.common.collect.Streams;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.authentication.ClientAuthenticator;
 import org.keycloak.authentication.ClientAuthenticatorFactory;
+import org.keycloak.authentication.authenticators.util.LoAUtil;
+import org.keycloak.common.Profile;
 import org.keycloak.crypto.CekManagementProvider;
 import org.keycloak.crypto.ClientSignatureVerifierProvider;
 import org.keycloak.crypto.ContentEncryptionProvider;
@@ -37,6 +38,7 @@ import org.keycloak.protocol.oidc.grants.device.endpoints.DeviceEndpoint;
 import org.keycloak.protocol.oidc.par.endpoints.ParEndpoint;
 import org.keycloak.protocol.oidc.representations.MTLSEndpointAliases;
 import org.keycloak.protocol.oidc.representations.OIDCConfigurationRepresentation;
+import org.keycloak.protocol.oidc.utils.AcrUtils;
 import org.keycloak.protocol.oidc.utils.OIDCResponseType;
 import org.keycloak.provider.Provider;
 import org.keycloak.provider.ProviderFactory;
@@ -45,21 +47,22 @@ import org.keycloak.services.Urls;
 import org.keycloak.services.clientregistration.ClientRegistrationService;
 import org.keycloak.services.clientregistration.oidc.OIDCClientRegistrationProviderFactory;
 import org.keycloak.services.resources.RealmsResource;
+import org.keycloak.services.util.DPoPUtil;
 import org.keycloak.urls.UrlType;
 import org.keycloak.util.JsonSerialization;
 import org.keycloak.wellknown.WellKnownProvider;
 
-import javax.ws.rs.core.UriBuilder;
-import javax.ws.rs.core.UriInfo;
+import jakarta.ws.rs.core.UriBuilder;
+import jakarta.ws.rs.core.UriInfo;
 
 import java.net.URI;
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -68,10 +71,7 @@ import java.util.stream.Stream;
  */
 public class OIDCWellKnownProvider implements WellKnownProvider {
 
-    public static final List<String> DEFAULT_GRANT_TYPES_SUPPORTED = list(OAuth2Constants.AUTHORIZATION_CODE,
-        OAuth2Constants.IMPLICIT, OAuth2Constants.REFRESH_TOKEN, OAuth2Constants.PASSWORD, OAuth2Constants.CLIENT_CREDENTIALS,
-        OAuth2Constants.DEVICE_CODE_GRANT_TYPE,
-        OAuth2Constants.CIBA_GRANT_TYPE);
+    public final List<String> DEFAULT_GRANT_TYPES_SUPPORTED;
 
     public static final List<String> DEFAULT_RESPONSE_TYPES_SUPPORTED = list(OAuth2Constants.CODE, OIDCResponseType.NONE, OIDCResponseType.ID_TOKEN, OIDCResponseType.TOKEN, "id_token token", "code id_token", "code token", "code id_token token");
 
@@ -98,6 +98,17 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
     }
 
     public OIDCWellKnownProvider(KeycloakSession session, Map<String, Object> openidConfigOverride, boolean includeClientScopes) {
+        DEFAULT_GRANT_TYPES_SUPPORTED = Stream.of(OAuth2Constants.AUTHORIZATION_CODE,
+                OAuth2Constants.IMPLICIT, OAuth2Constants.REFRESH_TOKEN, OAuth2Constants.PASSWORD, OAuth2Constants.CLIENT_CREDENTIALS,
+                OAuth2Constants.CIBA_GRANT_TYPE).collect(Collectors.toList());
+        if (Profile.isFeatureEnabled(Profile.Feature.TOKEN_EXCHANGE)) {
+            DEFAULT_GRANT_TYPES_SUPPORTED.add(OAuth2Constants.TOKEN_EXCHANGE_GRANT_TYPE);
+        }
+
+        if (Profile.isFeatureEnabled(Profile.Feature.DEVICE_FLOW)) {
+            DEFAULT_GRANT_TYPES_SUPPORTED.add(OAuth2Constants.DEVICE_CODE_GRANT_TYPE);
+        }
+
         this.session = session;
         this.openidConfigOverride = openidConfigOverride;
         this.includeClientScopes = includeClientScopes;
@@ -120,9 +131,11 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setIntrospectionEndpoint(backendUriBuilder.clone().path(OIDCLoginProtocolService.class, "token").path(TokenEndpoint.class, "introspect").build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
         config.setUserinfoEndpoint(backendUriBuilder.clone().path(OIDCLoginProtocolService.class, "issueUserInfo").build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
         config.setLogoutEndpoint(frontendUriBuilder.clone().path(OIDCLoginProtocolService.class, "logout").build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
-        config.setDeviceAuthorizationEndpoint(frontendUriBuilder.clone().path(OIDCLoginProtocolService.class, "auth")
-            .path(AuthorizationEndpoint.class, "authorizeDevice").path(DeviceEndpoint.class, "handleDeviceRequest")
-            .build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
+        if (Profile.isFeatureEnabled(Profile.Feature.DEVICE_FLOW)) {
+            config.setDeviceAuthorizationEndpoint(frontendUriBuilder.clone().path(OIDCLoginProtocolService.class, "auth")
+                    .path(AuthorizationEndpoint.class, "authorizeDevice").path(DeviceEndpoint.class, "handleDeviceRequest")
+                    .build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
+        }
         URI jwksUri = backendUriBuilder.clone().path(OIDCLoginProtocolService.class, "certs").build(realm.getName(),
             OIDCLoginProtocol.LOGIN_PROTOCOL);
 
@@ -138,6 +151,8 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setIdTokenEncryptionAlgValuesSupported(getSupportedEncryptionAlg(false));
         config.setIdTokenEncryptionEncValuesSupported(getSupportedEncryptionEnc(false));
         config.setUserInfoSigningAlgValuesSupported(getSupportedSigningAlgorithms(true));
+        config.setUserInfoEncryptionAlgValuesSupported(getSupportedEncryptionAlgorithms());
+        config.setUserInfoEncryptionEncValuesSupported(getSupportedContentEncryptionAlgorithms());
         config.setRequestObjectSigningAlgValuesSupported(getSupportedClientSigningAlgorithms(true));
         config.setRequestObjectEncryptionAlgValuesSupported(getSupportedEncryptionAlgorithms());
         config.setRequestObjectEncryptionEncValuesSupported(getSupportedContentEncryptionAlgorithms());
@@ -145,6 +160,7 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setSubjectTypesSupported(DEFAULT_SUBJECT_TYPES_SUPPORTED);
         config.setResponseModesSupported(DEFAULT_RESPONSE_MODES_SUPPORTED);
         config.setGrantTypesSupported(DEFAULT_GRANT_TYPES_SUPPORTED);
+        config.setAcrValuesSupported(getAcrValuesSupported(realm));
 
         config.setTokenEndpointAuthMethodsSupported(getClientAuthMethodsSupported());
         config.setTokenEndpointAuthSigningAlgValuesSupported(getSupportedClientSigningAlgorithms(false));
@@ -165,7 +181,9 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
                     .filter(clientScope -> Objects.equals(OIDCLoginProtocol.LOGIN_PROTOCOL, clientScope.getProtocol()))
                     .map(ClientScopeModel::getName)
                     .collect(Collectors.toList());
-            scopeNames.add(0, OAuth2Constants.SCOPE_OPENID);
+            if (!scopeNames.contains(OAuth2Constants.SCOPE_OPENID)) {
+                scopeNames.add(0, OAuth2Constants.SCOPE_OPENID);
+            }      
             config.setScopesSupported(scopeNames);
         }
 
@@ -179,6 +197,10 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         // KEYCLOAK-6771 Certificate Bound Token
         // https://tools.ietf.org/html/draft-ietf-oauth-mtls-08#section-6.2
         config.setTlsClientCertificateBoundAccessTokens(true);
+
+        if (Profile.isFeatureEnabled(Profile.Feature.DPOP)) {
+            config.setDpopSigningAlgValuesSupported(new ArrayList<>(DPoPUtil.DPOP_SUPPORTED_ALGS));
+        }
 
         URI revocationEndpoint = frontendUriBuilder.clone().path(OIDCLoginProtocolService.class, "revoke")
             .build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL);
@@ -201,6 +223,8 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
 
         MTLSEndpointAliases mtlsEndpointAliases = getMtlsEndpointAliases(config);
         config.setMtlsEndpointAliases(mtlsEndpointAliases);
+
+        config.setAuthorizationResponseIssParameterSupported(true);
 
         config = checkConfigOverride(config);
         return config;
@@ -227,7 +251,7 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
                 .map(ProviderFactory::getId);
 
         if (includeNone) {
-            supportedAlgorithms = Streams.concat(supportedAlgorithms, Stream.of("none"));
+            supportedAlgorithms = Stream.concat(supportedAlgorithms, Stream.of("none"));
         }
         return supportedAlgorithms.collect(Collectors.toList());
     }
@@ -253,6 +277,18 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         return getSupportedAlgorithms(ContentEncryptionProvider.class, false);
     }
 
+    private List<String> getAcrValuesSupported(RealmModel realm) {
+        // Values explicitly set on the realm mapping
+        Map<String, Integer> realmAcrLoaMap = AcrUtils.getAcrLoaMap(realm);
+        List<String> result = new ArrayList<>(realmAcrLoaMap.keySet());
+
+        // Add LoA levels configured in authentication flow in addition to the realm values
+        result.addAll(LoAUtil.getLoAConfiguredInRealmBrowserFlow(realm)
+                .map(String::valueOf)
+                .collect(Collectors.toList()));
+        return result;
+    }
+
     private List<String> getSupportedEncryptionAlgorithms() {
         return getSupportedAlgorithms(CekManagementProvider.class, false);
     }
@@ -275,7 +311,9 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         mtls_endpoints.setTokenEndpoint(config.getTokenEndpoint());
         mtls_endpoints.setRevocationEndpoint(config.getRevocationEndpoint());
         mtls_endpoints.setIntrospectionEndpoint(config.getIntrospectionEndpoint());
-        mtls_endpoints.setDeviceAuthorizationEndpoint(config.getDeviceAuthorizationEndpoint());
+        if (Profile.isFeatureEnabled(Profile.Feature.DEVICE_FLOW)) {
+            mtls_endpoints.setDeviceAuthorizationEndpoint(config.getDeviceAuthorizationEndpoint());
+        }
         mtls_endpoints.setRegistrationEndpoint(config.getRegistrationEndpoint());
         mtls_endpoints.setUserInfoEndpoint(config.getUserinfoEndpoint());
         mtls_endpoints.setBackchannelAuthenticationEndpoint(config.getBackchannelAuthenticationEndpoint());

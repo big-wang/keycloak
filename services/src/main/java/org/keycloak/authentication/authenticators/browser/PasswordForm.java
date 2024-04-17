@@ -27,8 +27,8 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.services.messages.Messages;
 
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 
 public class PasswordForm extends UsernamePasswordForm implements CredentialValidator<PasswordCredentialProvider> {
 
@@ -44,7 +44,7 @@ public class PasswordForm extends UsernamePasswordForm implements CredentialVali
 
     @Override
     public boolean configuredFor(KeycloakSession session, RealmModel realm, UserModel user) {
-        return session.userCredentialManager().isConfiguredFor(realm, user, getCredentialProvider(session).getType());
+        return user.credentialManager().isConfiguredFor(getCredentialProvider(session).getType());
     }
 
     @Override

@@ -19,6 +19,7 @@ package org.keycloak.cluster.infinispan;
 
 import org.infinispan.Cache;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
+import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
@@ -32,6 +33,7 @@ import org.keycloak.cluster.ClusterProvider;
 import org.keycloak.cluster.ClusterProviderFactory;
 import org.keycloak.common.util.Retry;
 import org.keycloak.common.util.Time;
+import org.keycloak.connections.infinispan.DefaultInfinispanConnectionProviderFactory;
 import org.keycloak.connections.infinispan.InfinispanConnectionProvider;
 import org.keycloak.connections.infinispan.TopologyInfo;
 import org.keycloak.models.KeycloakSession;
@@ -70,7 +72,13 @@ public class InfinispanClusterProviderFactory implements ClusterProviderFactory 
     // Just to extract notifications related stuff to separate class
     private InfinispanNotificationsManager notificationsManager;
 
-    private ExecutorService localExecutor = Executors.newCachedThreadPool();
+    private ExecutorService localExecutor = Executors.newCachedThreadPool(r -> {
+        Thread thread = Executors.defaultThreadFactory().newThread(r);
+        thread.setName(this.getClass().getName() + "-" + thread.getName());
+        return thread;
+    });
+
+    private ViewChangeListener workCacheListener;
 
     @Override
     public ClusterProvider create(KeycloakSession session) {
@@ -86,7 +94,8 @@ public class InfinispanClusterProviderFactory implements ClusterProviderFactory 
                     InfinispanConnectionProvider ispnConnections = session.getProvider(InfinispanConnectionProvider.class);
                     workCache = ispnConnections.getCache(InfinispanConnectionProvider.WORK_CACHE_NAME);
 
-                    workCache.getCacheManager().addListener(new ViewChangeListener());
+                    workCacheListener = new ViewChangeListener();
+                    workCache.getCacheManager().addListener(workCacheListener);
 
                     // See if we have RemoteStore (external JDG) configured for cross-Data-Center scenario
                     Set<RemoteStore> remoteStores = InfinispanUtil.getRemoteStores(workCache);
@@ -168,14 +177,19 @@ public class InfinispanClusterProviderFactory implements ClusterProviderFactory 
 
     @Override
     public void close() {
-
+        synchronized (this) {
+            if (workCache != null && workCacheListener != null) {
+                workCache.removeListener(workCacheListener);
+                workCacheListener = null;
+                localExecutor.shutdown();
+            }
+        }
     }
 
     @Override
     public String getId() {
         return PROVIDER_ID;
     }
-
 
     @Listener
     public class ViewChangeListener {
@@ -187,21 +201,30 @@ public class InfinispanClusterProviderFactory implements ClusterProviderFactory 
 
             // Use separate thread to avoid potential deadlock
             localExecutor.execute(() -> {
-                EmbeddedCacheManager cacheManager = workCache.getCacheManager();
-                Transport transport = cacheManager.getTransport();
+                try {
+                    EmbeddedCacheManager cacheManager = workCache.getCacheManager();
+                    Transport transport = cacheManager.getTransport();
 
-                // Coordinator makes sure that entries for outdated nodes are cleaned up
-                if (transport != null && transport.isCoordinator()) {
+                    // Coordinator makes sure that entries for outdated nodes are cleaned up
+                    if (transport != null && transport.isCoordinator()) {
 
-                    removedNodesAddresses.removeAll(newAddresses);
+                        removedNodesAddresses.removeAll(newAddresses);
 
-                    if (removedNodesAddresses.isEmpty()) {
-                        return;
+                        if (removedNodesAddresses.isEmpty()) {
+                            return;
+                        }
+
+                        logger.debugf("Nodes %s removed from cluster. Removing tasks locked by this nodes", removedNodesAddresses.toString());
+                        DefaultInfinispanConnectionProviderFactory.runWithReadLockOnCacheManager(() -> {
+                            if (workCache.getStatus() == ComponentStatus.RUNNING) {
+                                workCache.entrySet().removeIf(new LockEntryPredicate(removedNodesAddresses));
+                            } else {
+                                logger.warn("work cache is not running, ignoring event");
+                            }
+                        });
                     }
-
-                    logger.debugf("Nodes %s removed from cluster. Removing tasks locked by this nodes", removedNodesAddresses.toString());
-
-                    workCache.entrySet().removeIf(new LockEntryPredicate(removedNodesAddresses));
+                } catch (Throwable t) {
+                    logger.error("caught exception in ViewChangeListener", t);
                 }
             });
         }

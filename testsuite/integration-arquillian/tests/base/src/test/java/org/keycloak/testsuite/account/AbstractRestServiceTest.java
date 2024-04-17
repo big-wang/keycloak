@@ -38,11 +38,10 @@ import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
 import org.keycloak.testsuite.arquillian.annotation.DisableFeature;
+import org.keycloak.testsuite.broker.util.SimpleHttpDefault;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.TokenUtil;
 import org.keycloak.testsuite.util.UserBuilder;
-
-import javax.ws.rs.core.UriBuilder;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -86,7 +85,7 @@ public abstract class AbstractRestServiceTest extends AbstractTestRealmKeycloakT
         testRealm.getUsers().add(UserBuilder.create().username("view-account-access").role("account", "view-profile").password("password").build());
         testRealm.getUsers().add(UserBuilder.create().username("view-applications-access").addRoles("user", "offline_access").role("account", "view-applications").role("account", "manage-consent").password("password").build());
         testRealm.getUsers().add(UserBuilder.create().username("view-consent-access").role("account", "view-consent").password("password").build());
-        testRealm.getUsers().add(UserBuilder.create().username("manage-consent-access").role("account", "manage-consent").password("password").build());
+        testRealm.getUsers().add(UserBuilder.create().username("manage-consent-access").role("account", "manage-consent").role("account", "view-profile").password("password").build());
 
         org.keycloak.representations.idm.ClientRepresentation inUseApp = ClientBuilder.create().clientId("in-use-client")
                 .id(KeycloakModelUtils.generateId())
@@ -141,7 +140,7 @@ public abstract class AbstractRestServiceTest extends AbstractTestRealmKeycloakT
     // Check if the feature really works
     private void checkIfFeatureWorks(boolean shouldWorks) {
         try {
-            List<SessionRepresentation> sessions = SimpleHttp.doGet(getAccountUrl("sessions"), httpClient).auth(tokenUtil.getToken())
+            List<SessionRepresentation> sessions = SimpleHttpDefault.doGet(getAccountUrl("sessions"), httpClient).auth(tokenUtil.getToken())
                     .asJson(new TypeReference<List<SessionRepresentation>>() {
                     });
             assertEquals(1, sessions.size());

@@ -9,6 +9,8 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 
 public class FreeMarker {
@@ -17,8 +19,7 @@ public class FreeMarker {
     private Map<String, Object> attributes;
     private Configuration configuration;
 
-    public FreeMarker(File srcDir, File targetDir, Map<String, Object> attributes) throws IOException {
-        this.targetDir = targetDir;
+    public FreeMarker(File srcDir, Map<String, Object> attributes) throws IOException {
         this.attributes = attributes;
 
         configuration = new Configuration(Configuration.VERSION_2_3_31);
@@ -28,7 +29,7 @@ public class FreeMarker {
         configuration.setLogTemplateExceptions(false);
     }
 
-    public void template(String template) throws IOException, TemplateException {
+    public void template(String template, File targetDir) throws IOException, TemplateException {
         Template t = configuration.getTemplate(template);
         File out = targetDir.toPath().resolve(template).toFile();
 
@@ -37,8 +38,11 @@ public class FreeMarker {
             parent.mkdir();
         }
 
-        Writer w = new FileWriter(out);
-        t.process(attributes, w);
+        HashMap<String, Object> attrs = new HashMap<>(attributes);
+        attrs.put("id", template.split("/")[1].replace(".adoc", ""));
+
+        Writer w = new FileWriter(out, StandardCharsets.UTF_8);
+        t.process(attrs, w);
     }
 
 }

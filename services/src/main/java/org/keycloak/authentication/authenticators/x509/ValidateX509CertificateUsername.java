@@ -20,7 +20,7 @@ package org.keycloak.authentication.authenticators.x509;
 
 import java.security.cert.X509Certificate;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 
 import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.AuthenticationFlowError;
@@ -124,7 +124,7 @@ public class ValidateX509CertificateUsername extends AbstractX509ClientCertifica
             return;
         }
 
-        String bruteForceError = getDisabledByBruteForceEventError(context.getProtector(), context.getSession(), context.getRealm(), user);
+        String bruteForceError = getDisabledByBruteForceEventError(context, user);
         if (bruteForceError != null) {
             context.getEvent().user(user);
             context.getEvent().error(bruteForceError);

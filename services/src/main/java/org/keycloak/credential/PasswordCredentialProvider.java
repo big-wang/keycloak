@@ -19,16 +19,13 @@ package org.keycloak.credential;
 import org.jboss.logging.Logger;
 import org.keycloak.common.util.Time;
 import org.keycloak.credential.hash.PasswordHashProvider;
-import org.keycloak.models.ModelException;
-import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.ModelException;
 import org.keycloak.models.PasswordPolicy;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
-import org.keycloak.models.cache.CachedUserModel;
-import org.keycloak.models.cache.OnUserCache;
-import org.keycloak.models.cache.UserCache;
+import org.keycloak.models.credential.PasswordCredentialModel;
 import org.keycloak.policy.PasswordPolicyManagerProvider;
 import org.keycloak.policy.PolicyError;
 
@@ -40,10 +37,9 @@ import java.util.stream.Stream;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class PasswordCredentialProvider implements CredentialProvider<PasswordCredentialModel>, CredentialInputUpdater.Streams,
-        CredentialInputValidator, OnUserCache {
+public class PasswordCredentialProvider implements CredentialProvider<PasswordCredentialModel>, CredentialInputUpdater,
+        CredentialInputValidator {
 
-    public static final String PASSWORD_CACHE_KEY = PasswordCredentialProvider.class.getName() + "." + PasswordCredentialModel.TYPE;
     private static final Logger logger = Logger.getLogger(PasswordCredentialProvider.class);
 
     protected final KeycloakSession session;
@@ -52,23 +48,9 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
         this.session = session;
     }
 
-    protected UserCredentialStore getCredentialStore() {
-        return session.userCredentialManager();
-    }
-
     public PasswordCredentialModel getPassword(RealmModel realm, UserModel user) {
-        List<CredentialModel> passwords = null;
-        if (user instanceof CachedUserModel && !((CachedUserModel) user).isMarkedForEviction()) {
-            CachedUserModel cached = (CachedUserModel) user;
-            passwords = (List<CredentialModel>) cached.getCachedWith().get(PASSWORD_CACHE_KEY);
-
-        }
-        // if the model was marked for eviction while passwords were initialized, override it from credentialStore
-        if (!(user instanceof CachedUserModel) || ((CachedUserModel) user).isMarkedForEviction()) {
-            passwords = getCredentialStore().getStoredCredentialsByTypeStream(realm, user, getType()).collect(Collectors.toList());
-        }
-        if (passwords == null || passwords.isEmpty()) return null;
-
+        List<CredentialModel> passwords = user.credentialManager().getStoredCredentialsByTypeStream(getType()).collect(Collectors.toList());
+        if (passwords.isEmpty()) return null;
         return PasswordCredentialModel.createFromCredentialModel(passwords.get(0));
     }
 
@@ -82,9 +64,13 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
         if (hash == null) {
             return false;
         }
-        PasswordCredentialModel credentialModel = hash.encodedCredential(password, policy.getHashIterations());
-        credentialModel.setCreatedDate(Time.currentTimeMillis());
-        createCredential(realm, user, credentialModel);
+        try {
+            PasswordCredentialModel credentialModel = hash.encodedCredential(password, policy.getHashIterations());
+            credentialModel.setCreatedDate(Time.currentTimeMillis());
+            createCredential(realm, user, credentialModel);
+        } catch (Throwable t) {
+            throw new ModelException(t.getMessage(), t);
+        }
         return true;
     }
 
@@ -101,38 +87,34 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
             credentialModel.setCreatedDate(Time.currentTimeMillis());
         }
         if (oldPassword == null) { // no password exists --> create new
-            createdCredential = getCredentialStore().createCredential(realm, user, credentialModel);
+            createdCredential = user.credentialManager().createStoredCredential(credentialModel);
         } else { // password exists --> update existing
             credentialModel.setId(oldPassword.getId());
-            getCredentialStore().updateCredential(realm, user, credentialModel);
+            user.credentialManager().updateStoredCredential(credentialModel);
             createdCredential = credentialModel;
 
             // 2) add a password history item based on the old password
             if (expiredPasswordsPolicyValue > 1) {
                 oldPassword.setId(null);
                 oldPassword.setType(PasswordCredentialModel.PASSWORD_HISTORY);
-                getCredentialStore().createCredential(realm, user, oldPassword);
+                user.credentialManager().createStoredCredential(oldPassword);
             }
         }
         
         // 3) remove old password history items
         final int passwordHistoryListMaxSize = Math.max(0, expiredPasswordsPolicyValue - 1);
-        getCredentialStore().getStoredCredentialsByTypeStream(realm, user, PasswordCredentialModel.PASSWORD_HISTORY)
+        user.credentialManager().getStoredCredentialsByTypeStream(PasswordCredentialModel.PASSWORD_HISTORY)
                 .sorted(CredentialModel.comparingByStartDateDesc())
                 .skip(passwordHistoryListMaxSize)
                 .collect(Collectors.toList())
-                .forEach(p -> getCredentialStore().removeStoredCredential(realm, user, p.getId()));
+                .forEach(p -> user.credentialManager().removeStoredCredentialById(p.getId()));
 
-        UserCache userCache = session.userCache();
-        if (userCache != null) {
-            userCache.evict(realm, user);
-        }
         return createdCredential;
     }
 
     @Override
     public boolean deleteCredential(RealmModel realm, UserModel user, String credentialId) {
-        return getCredentialStore().removeStoredCredential(realm, user, credentialId);
+        return user.credentialManager().removeStoredCredentialById(credentialId);
     }
 
     @Override
@@ -142,66 +124,17 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
 
 
     protected PasswordHashProvider getHashProvider(PasswordPolicy policy) {
-        PasswordHashProvider hash = session.getProvider(PasswordHashProvider.class, policy.getHashAlgorithm());
-        if (hash == null) {
-            logger.warnv("Realm PasswordPolicy PasswordHashProvider {0} not found", policy.getHashAlgorithm());
-            return session.getProvider(PasswordHashProvider.class, PasswordPolicy.HASH_ALGORITHM_DEFAULT);
+        if (policy != null && policy.getHashAlgorithm() != null) {
+            PasswordHashProvider provider = session.getProvider(PasswordHashProvider.class, policy.getHashAlgorithm());
+            if (provider != null) {
+                return provider;
+            } else {
+                logger.warnv("Realm PasswordPolicy PasswordHashProvider {0} not found", policy.getHashAlgorithm());
+            }
         }
-        return hash;
+
+        return session.getProvider(PasswordHashProvider.class);
     }
-
-    /*@Override
-    public boolean updateCredential(RealmModel realm, UserModel user, CredentialInput input) {
-        if (!supportsCredentialType(input.getType())) return false;
-
-        if (!(input instanceof UserCredentialModel)) {
-            logger.debug("Expected instance of UserCredentialModel for CredentialInput");
-            return false;
-        }
-        UserCredentialModel cred = (UserCredentialModel)input;
-        PasswordPolicy policy = realm.getPasswordPolicy();
-
-        PolicyError error = session.getProvider(PasswordPolicyManagerProvider.class).validate(realm, user, cred.getValue());
-        if (error != null) throw new ModelException(error.getMessage(), error.getParameters());
-
-
-        PasswordHashProvider hash = getHashProvider(policy);
-        if (hash == null) {
-            return false;
-        }
-        CredentialModel oldPassword = getPassword(realm, user);
-
-        expirePassword(realm, user, policy);
-        CredentialModel newPassword = new CredentialModel();
-        newPassword.setType(CredentialModel.PASSWORD);
-        long createdDate = Time.currentTimeMillis();
-        newPassword.setCreatedDate(createdDate);
-        hash.encode(cred.getValue(), policy.getHashIterations(), newPassword);
-        getCredentialStore().createCredential(realm, user, newPassword);
-        UserCache userCache = session.userCache();
-        if (userCache != null) {
-            userCache.evict(realm, user);
-        }
-        return true;
-    }*/
-
-    /*@Override
-    public void disableCredentialType(RealmModel realm, UserModel user, String credentialType) {
-        if (!supportsCredentialType(credentialType)) return;
-        PasswordPolicy policy = realm.getPasswordPolicy();
-        expirePassword(realm, user, policy);
-    }
-
-    @Override
-    public Set<String> getDisableableCredentialTypes(RealmModel realm, UserModel user) {
-        if (!getCredentialStore().getStoredCredentialsByType(realm, user, CredentialModel.PASSWORD).isEmpty()) {
-            Set<String> set = new HashSet<>();
-            set.add(CredentialModel.PASSWORD);
-            return set;
-        } else {
-            return Collections.EMPTY_SET;
-        }
-    }*/
 
     @Override
     public boolean supportsCredentialType(String credentialType) {
@@ -241,7 +174,7 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
         }
         PasswordCredentialModel password = getPassword(realm, user);
         if (password == null) {
-            logger.debugv("No password cached or stored for user {0} ", user.getUsername());
+            logger.debugv("No password stored for user {0} ", user.getUsername());
             return false;
         }
         PasswordHashProvider hash = session.getProvider(PasswordHashProvider.class, password.getPasswordCredentialData().getAlgorithm());
@@ -249,41 +182,39 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
             logger.debugv("PasswordHashProvider {0} not found for user {1} ", password.getPasswordCredentialData().getAlgorithm(), user.getUsername());
             return false;
         }
-        if (!hash.verify(input.getChallengeResponse(), password)) {
-            logger.debugv("Failed password validation for user {0} ", user.getUsername());
+        try {
+            if (!hash.verify(input.getChallengeResponse(), password)) {
+                logger.debugv("Failed password validation for user {0} ", user.getUsername());
+                return false;
+            }
+
+            rehashPasswordIfRequired(session, realm, user, input, password);
+        } catch (Throwable t) {
+            logger.warn("Error when validating user password", t);
             return false;
-        }
-        PasswordPolicy policy = realm.getPasswordPolicy();
-        if (policy == null) {
-            return true;
-        }
-        hash = getHashProvider(policy);
-        if (hash == null) {
-            return true;
-        }
-        if (hash.policyCheck(policy, password)) {
-            return true;
-        }
-
-        PasswordCredentialModel newPassword = hash.encodedCredential(input.getChallengeResponse(), policy.getHashIterations());
-        newPassword.setId(password.getId());
-        newPassword.setCreatedDate(password.getCreatedDate());
-        newPassword.setUserLabel(password.getUserLabel());
-        getCredentialStore().updateCredential(realm, user, newPassword);
-
-        UserCache userCache = session.userCache();
-        if (userCache != null) {
-            userCache.evict(realm, user);
         }
 
         return true;
     }
 
-    @Override
-    public void onCache(RealmModel realm, CachedUserModel user, UserModel delegate) {
-        List<CredentialModel> passwords = getCredentialStore().getStoredCredentialsByTypeStream(realm, user, getType())
-                .collect(Collectors.toList());
-        user.getCachedWith().put(PASSWORD_CACHE_KEY, passwords);
+    private void rehashPasswordIfRequired(KeycloakSession session, RealmModel realm, UserModel user, CredentialInput input, PasswordCredentialModel password) {
+        PasswordPolicy passwordPolicy = realm.getPasswordPolicy();
+        PasswordHashProvider provider;
+        if (passwordPolicy != null && passwordPolicy.getHashAlgorithm() != null) {
+            provider = session.getProvider(PasswordHashProvider.class, passwordPolicy.getHashAlgorithm());
+        } else {
+            provider = session.getProvider(PasswordHashProvider.class);
+        }
+
+        if (!provider.policyCheck(passwordPolicy, password)) {
+            int iterations = passwordPolicy != null ? passwordPolicy.getHashIterations() : -1;
+
+            PasswordCredentialModel newPassword = provider.encodedCredential(input.getChallengeResponse(), iterations);
+            newPassword.setId(password.getId());
+            newPassword.setCreatedDate(password.getCreatedDate());
+            newPassword.setUserLabel(password.getUserLabel());
+            user.credentialManager().updateStoredCredential(newPassword);
+        }
     }
 
     @Override
@@ -302,7 +233,7 @@ public class PasswordCredentialProvider implements CredentialProvider<PasswordCr
 
         // Check if we are creating or updating password
         UserModel user = metadataContext.getUser();
-        if (user != null && session.userCredentialManager().isConfiguredFor(session.getContext().getRealm(), user, getType())) {
+        if (user != null && user.credentialManager().isConfiguredFor(getType())) {
             metadataBuilder.updateAction(UserModel.RequiredAction.UPDATE_PASSWORD.toString());
         } else {
             metadataBuilder.createAction(UserModel.RequiredAction.UPDATE_PASSWORD.toString());

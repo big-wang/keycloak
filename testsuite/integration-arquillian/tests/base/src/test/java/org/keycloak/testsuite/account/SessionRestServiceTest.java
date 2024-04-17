@@ -20,7 +20,7 @@ import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -38,8 +38,7 @@ import org.keycloak.representations.account.ClientRepresentation;
 import org.keycloak.representations.account.DeviceRepresentation;
 import org.keycloak.representations.account.SessionRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
+import org.keycloak.testsuite.broker.util.SimpleHttpDefault;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.ContainerAssume;
 import org.keycloak.testsuite.util.OAuthClient;
@@ -102,30 +101,29 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         TokenUtil viewToken = new TokenUtil("view-account-access", "password");
 
         // Read sessions with no access
-        assertEquals(403, SimpleHttp.doGet(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
+        assertEquals(403, SimpleHttpDefault.doGet(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
                 .auth(noaccessToken.getToken()).asStatus());
 
         // Delete all sessions with no access
-        assertEquals(403, SimpleHttp.doDelete(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
+        assertEquals(403, SimpleHttpDefault.doDelete(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
                 .auth(noaccessToken.getToken()).asStatus());
 
         // Delete all sessions with read only
-        assertEquals(403, SimpleHttp.doDelete(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
+        assertEquals(403, SimpleHttpDefault.doDelete(getAccountUrl("sessions"), httpClient).header("Accept", "application/json")
                 .auth(viewToken.getToken()).asStatus());
 
         // Delete single session with no access
         assertEquals(403,
-                SimpleHttp.doDelete(getAccountUrl("sessions/bogusId"), httpClient).header("Accept", "application/json")
+                SimpleHttpDefault.doDelete(getAccountUrl("sessions/bogusId"), httpClient).header("Accept", "application/json")
                         .auth(noaccessToken.getToken()).asStatus());
 
         // Delete single session with read only
         assertEquals(403,
-                SimpleHttp.doDelete(getAccountUrl("sessions/bogusId"), httpClient).header("Accept", "application/json")
+                SimpleHttpDefault.doDelete(getAccountUrl("sessions/bogusId"), httpClient).header("Accept", "application/json")
                         .auth(viewToken.getToken()).asStatus());
     }
 
     @Test
-    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testGetSessions() throws Exception {
         oauth.setDriver(secondBrowser);
         codeGrant("public-client-0");
@@ -145,7 +143,6 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     @Test
-    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testGetDevicesResponse() throws Exception {
         assumeTrue("Browser must be htmlunit. Otherwise we are not able to set desired BrowserHeaders",
                 System.getProperty("browser").equals("htmlUnit"));
@@ -188,7 +185,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
 
         // first browser authenticates from Fedora
         oauth.setBrowserHeader("User-Agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1");
-        codeGrant("public-client-0");
+        OAuthClient.AccessTokenResponse tokenResponse1 = codeGrant("public-client-0");
         List<DeviceRepresentation> devices = getDevicesOtherThanOther();
         assertEquals("Should have a single device", 1, devices.size());
         List<DeviceRepresentation> fedoraDevices = devices.stream()
@@ -204,7 +201,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         oauth.setDriver(secondBrowser);
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Gecko/20100101 Firefox/15.0.1");
-        codeGrant("public-client-0");
+        OAuthClient.AccessTokenResponse tokenResponse2 = codeGrant("public-client-0");
         devices = getDevicesOtherThanOther();
         // should have two devices
         assertEquals("Should have two devices", 2, devices.size());
@@ -222,23 +219,25 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
 
         // first browser authenticates from Windows using Edge
         oauth.setDriver(firstBrowser);
+        oauth.idTokenHint(tokenResponse1.getIdToken()).openLogout();
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (Windows Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.71 Safari/537.36 Edge/12.0");
-        codeGrant("public-client-0");
+        tokenResponse1 = codeGrant("public-client-0");
 
         // second browser authenticates from Windows using Firefox
         oauth.setDriver(secondBrowser);
+        oauth.idTokenHint(tokenResponse2.getIdToken()).openLogout();
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Gecko/20100101 Firefox/15.0.1");
-        codeGrant("public-client-0");
+        tokenResponse2 = codeGrant("public-client-0");
 
         // third browser authenticates from Windows using Safari
         oauth.setDriver(thirdBrowser);
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Version/11.0 Safari/603.1.30");
         oauth.setBrowserHeader("X-Forwarded-For", "192.168.10.3");
-        OAuthClient.AccessTokenResponse tokenResponse = codeGrant("public-client-0");
-        devices = getDevicesOtherThanOther(tokenResponse.getAccessToken());
+        OAuthClient.AccessTokenResponse tokenResponse3 = codeGrant("public-client-0");
+        devices = getDevicesOtherThanOther(tokenResponse3.getAccessToken());
         assertEquals(
                 "Should have a single device because all browsers (and sessions) are from the same platform (OS + OS version)",
                 1, devices.size());
@@ -261,10 +260,11 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
 
         // third browser authenticates from Windows using a different Windows version
         oauth.setDriver(thirdBrowser);
+        oauth.idTokenHint(tokenResponse3.getIdToken()).openLogout();
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (Windows 7) AppleWebKit/537.36 (KHTML, like Gecko) Version/11.0 Safari/603.1.30");
         oauth.setBrowserHeader("X-Forwarded-For", "192.168.10.3");
-        codeGrant("public-client-0");
+        tokenResponse3 = codeGrant("public-client-0");
         devices = getDevicesOtherThanOther();
         windowsDevices = devices.stream()
                 .filter(device -> "Windows".equals(device.getOs())).collect(Collectors.toList());
@@ -272,13 +272,16 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         assertEquals(2, windowsDevices.size());
 
         oauth.setDriver(firstBrowser);
+        oauth.idTokenHint(tokenResponse1.getIdToken()).openLogout();
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 5_1_1 like Mac OS X) AppleWebKit/534.46 (KHTML, like Gecko) Version/5.1 Mobile/9B206 Safari/7534.48.3");
-        codeGrant("public-client-0");
+        tokenResponse1 = codeGrant("public-client-0");
+
         oauth.setDriver(secondBrowser);
+        oauth.idTokenHint(tokenResponse2.getIdToken()).openLogout();
         oauth.setBrowserHeader("User-Agent",
                 "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1");
-        codeGrant("public-client-0");
+        tokenResponse2 = codeGrant("public-client-0");
         devices = getDevicesOtherThanOther();
         assertEquals("Should have 3 devices", 3, devices.size());
         windowsDevices = devices.stream()
@@ -308,14 +311,14 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         assertEquals(2, sessions.size());
 
         // With `ViewToken` you can only read
-        int status = SimpleHttp.doDelete(getAccountUrl("sessions/" + sessionId), httpClient).acceptJson()
+        int status = SimpleHttpDefault.doDelete(getAccountUrl("sessions/" + sessionId), httpClient).acceptJson()
                 .auth(viewToken.getToken()).asStatus();
         assertEquals(403, status);
         sessions = getSessions(viewToken.getToken());
         assertEquals(2, sessions.size());
 
         // Here you can delete the session
-        status = SimpleHttp.doDelete(getAccountUrl("sessions/" + sessionId), httpClient).acceptJson().auth(tokenUtil.getToken())
+        status = SimpleHttpDefault.doDelete(getAccountUrl("sessions/" + sessionId), httpClient).acceptJson().auth(tokenUtil.getToken())
                 .asStatus();
         assertEquals(204, status);
         sessions = getSessions(tokenUtil.getToken());
@@ -331,25 +334,24 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
         assertEquals(3, getSessions().size());
 
         String currentToken = tokenResponse.getAccessToken();
-        int status = SimpleHttp.doDelete(getAccountUrl("sessions"), httpClient)
+        int status = SimpleHttpDefault.doDelete(getAccountUrl("sessions"), httpClient)
                 .acceptJson()
                 .auth(currentToken).asStatus();
         assertEquals(204, status);
         assertEquals(1, getSessions(currentToken).size());
 
-        status = SimpleHttp.doDelete(getAccountUrl("sessions?current=true"), httpClient)
+        status = SimpleHttpDefault.doDelete(getAccountUrl("sessions?current=true"), httpClient)
                 .acceptJson()
                 .auth(currentToken).asStatus();
         assertEquals(204, status);
 
-        status = SimpleHttp.doGet(getAccountUrl("sessions"), httpClient)
+        status = SimpleHttpDefault.doGet(getAccountUrl("sessions"), httpClient)
                 .acceptJson()
                 .auth(currentToken).asStatus();
         assertEquals(401, status);
     }
 
     @Test
-    @AuthServerContainerExclude(AuthServer.REMOTE)
     public void testNullOrEmptyUserAgent() throws Exception {
         assumeTrue("Browser must be htmlunit. Otherwise we are not able to set desired BrowserHeaders",
                 System.getProperty("browser").equals("htmlUnit"));
@@ -405,7 +407,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     private List<SessionRepresentation> getSessions(String sessionOne) throws IOException {
-        return SimpleHttp
+        return SimpleHttpDefault
                 .doGet(getAccountUrl("sessions"), httpClient).auth(sessionOne)
                 .asJson(new TypeReference<List<SessionRepresentation>>() {
                 });
@@ -424,7 +426,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     private List<DeviceRepresentation> queryDevices(String token) throws IOException {
-        return SimpleHttp
+        return SimpleHttpDefault
                 .doGet(getAccountUrl("sessions/devices"), httpClient).auth(token)
                 .asJson(new TypeReference<List<DeviceRepresentation>>() {
                 });
@@ -433,7 +435,6 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     private OAuthClient.AccessTokenResponse codeGrant(String clientId) {
         oauth.clientId(clientId);
         oauth.redirectUri(OAuthClient.APP_ROOT + "/auth");
-        oauth.openLogout();
         oauth.doLogin("test-user@localhost", "password");
         String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
         return oauth.doAccessTokenRequest(code, "password");
@@ -446,7 +447,7 @@ public class SessionRestServiceTest extends AbstractRestServiceTest {
     }
 
     private List<SessionRepresentation> getSessions() throws IOException {
-        return SimpleHttp
+        return SimpleHttpDefault
                 .doGet(getAccountUrl("sessions"), httpClient).auth(tokenUtil.getToken())
                 .asJson(new TypeReference<List<SessionRepresentation>>() {
                 });

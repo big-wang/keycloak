@@ -17,14 +17,13 @@
 
 package org.keycloak.testsuite.client.resources;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
 import org.keycloak.exportimport.Strategy;
 
 /**
@@ -46,59 +45,59 @@ public interface TestingExportImportResource {
     @Path("/get-users-per-file")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Integer getUsersPerFile();
+    Integer getUsersPerFile();
 
     @PUT
     @Path("/set-users-per-file")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setUsersPerFile(@QueryParam("usersPerFile") Integer usersPerFile);
+    void setUsersPerFile(@QueryParam("usersPerFile") Integer usersPerFile);
 
     @GET
     @Path("/get-dir")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public String getDir();
+    String getDir();
 
     @PUT
     @Path("/set-dir")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public String setDir(@QueryParam("dir") String dir);
+    String setDir(@QueryParam("dir") String dir);
 
     @PUT
     @Path("/set-import-strategy")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setStrategy(@QueryParam("importStrategy") Strategy strategy);
+    void setStrategy(@QueryParam("importStrategy") Strategy strategy);
 
     @PUT
     @Path("/export-import-provider")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setProvider(@QueryParam("exportImportProvider") String exportImportProvider);
+    void setProvider(@QueryParam("exportImportProvider") String exportImportProvider);
 
     @PUT
     @Path("/export-import-file")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setFile(@QueryParam("file") String file);
+    void setFile(@QueryParam("file") String file);
 
     @PUT
     @Path("/export-import-action")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setAction(@QueryParam("exportImportAction") String exportImportAction);
+    void setAction(@QueryParam("exportImportAction") String exportImportAction);
 
     @PUT
     @Path("/set-realm-name")
     @Consumes(MediaType.APPLICATION_JSON)
-    public void setRealmName(@QueryParam("realmName") String realmName);
+    void setRealmName(@QueryParam("realmName") String realmName);
 
     @GET
     @Path("/get-test-dir")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public String getExportImportTestDirectory();
+    String getExportImportTestDirectory();
 
     @GET
     @Path("/clear")
     @Produces(MediaType.APPLICATION_JSON)
-    public Response clear();
+    void clear();
 
 }

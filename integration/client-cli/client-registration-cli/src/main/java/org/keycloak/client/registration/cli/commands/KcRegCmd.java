@@ -16,13 +16,10 @@
  */
 package org.keycloak.client.registration.cli.commands;
 
-import org.jboss.aesh.cl.GroupCommandDefinition;
-import org.jboss.aesh.console.command.CommandException;
-import org.jboss.aesh.console.command.CommandResult;
-import org.jboss.aesh.console.command.invocation.CommandInvocation;
-
 import java.io.PrintWriter;
 import java.io.StringWriter;
+
+import picocli.CommandLine.Command;
 
 import static org.keycloak.client.registration.cli.util.ConfigUtil.DEFAULT_CONFIG_FILE_STRING;
 import static org.keycloak.client.registration.cli.util.IoUtil.printOut;
@@ -33,27 +30,30 @@ import static org.keycloak.client.registration.cli.util.OsUtil.PROMPT;
  * @author <a href="mailto:mstrukel@redhat.com">Marko Strukelj</a>
  */
 
-@GroupCommandDefinition(name = "kcreg", description = "COMMAND [ARGUMENTS]", groupCommands = {
-    HelpCmd.class, ConfigCmd.class, CreateCmd.class, UpdateCmd.class, GetCmd.class, DeleteCmd.class, AttrsCmd.class, UpdateTokenCmd.class} )
+@Command(name = "kcreg",
+header = {
+        "Keycloak - Open Source Identity and Access Management",
+        "",
+        "Find more information at: https://www.keycloak.org/docs/latest"
+},
+description = {
+        "%nCOMMAND [ARGUMENTS]"
+},
+subcommands = {
+        HelpCmd.class,
+        ConfigCmd.class,
+        CreateCmd.class,
+        GetCmd.class,
+        UpdateCmd.class,
+        DeleteCmd.class,
+        AttrsCmd.class,
+        UpdateTokenCmd.class
+})
 public class KcRegCmd extends AbstractGlobalOptionsCmd {
-
-    //@Arguments
-    //private List<String> args;
-
+    
     @Override
-    public CommandResult execute(CommandInvocation commandInvocation) throws CommandException, InterruptedException {
-        try {
-            // if --help was requested then status is SUCCESS
-            // if not we print help anyway, but status is FAILURE
-            if (printHelp()) {
-                return CommandResult.SUCCESS;
-            } else {
-                printOut(usage());
-                return CommandResult.FAILURE;
-            }
-        } finally {
-            commandInvocation.stop();
-        }
+    protected boolean nothingToDo() {
+        return true;
     }
 
     public static String usage() {
@@ -66,9 +66,9 @@ public class KcRegCmd extends AbstractGlobalOptionsCmd {
         out.println();
         out.println("For example:");
         out.println();
-        out.println("  " + PROMPT + " " + CMD + " config credentials --server http://localhost:8080/auth --realm master --user admin");
+        out.println("  " + PROMPT + " " + CMD + " config credentials --server http://localhost:8080 --realm master --user admin");
         out.println("  Enter password: ");
-        out.println("  Logging into http://localhost:8080/auth as user admin of realm master");
+        out.println("  Logging into http://localhost:8080 as user admin of realm master");
         out.println();
         out.println("Any configured username can be used for login, but to perform client registration operations the user");
         out.println("needs proper roles, otherwise attempts to create, update, read, or delete clients will fail.");

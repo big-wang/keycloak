@@ -19,7 +19,6 @@ package org.keycloak.protocol.oidc.utils;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Data associated with the oauth2 code.
@@ -39,8 +38,9 @@ public class OAuth2Code {
     private static final String REDIRECT_URI_PARAM_NOTE = "redirectUri";
     private static final String CODE_CHALLENGE_NOTE = "code_challenge";
     private static final String CODE_CHALLENGE_METHOD_NOTE = "code_challenge_method";
+    private static final String USER_SESSION_ID_NOTE = "user_session_id";
 
-    private final UUID id;
+    private final String id;
 
     private final int expiration;
 
@@ -53,10 +53,10 @@ public class OAuth2Code {
     private final String codeChallenge;
 
     private final String codeChallengeMethod;
+    private final String userSessionId;
 
-
-    public OAuth2Code(UUID id, int expiration, String nonce, String scope, String redirectUriParam,
-                      String codeChallenge, String codeChallengeMethod) {
+    public OAuth2Code(String id, int expiration, String nonce, String scope, String redirectUriParam,
+                      String codeChallenge, String codeChallengeMethod, String userSessionId) {
         this.id = id;
         this.expiration = expiration;
         this.nonce = nonce;
@@ -64,17 +64,19 @@ public class OAuth2Code {
         this.redirectUriParam = redirectUriParam;
         this.codeChallenge = codeChallenge;
         this.codeChallengeMethod = codeChallengeMethod;
+        this.userSessionId = userSessionId;
     }
 
 
     private OAuth2Code(Map<String, String> data) {
-        id = UUID.fromString(data.get(ID_NOTE));
+        id = data.get(ID_NOTE);
         expiration = Integer.parseInt(data.get(EXPIRATION_NOTE));
         nonce = data.get(NONCE_NOTE);
         scope = data.get(SCOPE_NOTE);
         redirectUriParam = data.get(REDIRECT_URI_PARAM_NOTE);
         codeChallenge = data.get(CODE_CHALLENGE_NOTE);
         codeChallengeMethod = data.get(CODE_CHALLENGE_METHOD_NOTE);
+        userSessionId = data.get(USER_SESSION_ID_NOTE);
     }
 
 
@@ -93,12 +95,13 @@ public class OAuth2Code {
         result.put(REDIRECT_URI_PARAM_NOTE, redirectUriParam);
         result.put(CODE_CHALLENGE_NOTE, codeChallenge);
         result.put(CODE_CHALLENGE_METHOD_NOTE, codeChallengeMethod);
+        result.put(USER_SESSION_ID_NOTE, userSessionId);
 
         return result;
     }
 
 
-    public UUID getId() {
+    public String getId() {
         return id;
     }
 
@@ -124,5 +127,9 @@ public class OAuth2Code {
 
     public String getCodeChallengeMethod() {
         return codeChallengeMethod;
+    }
+
+    public String getUserSessionId() {
+        return userSessionId;
     }
 }

@@ -21,7 +21,7 @@
     <parent>
         <artifactId>integration-arquillian-test-apps-fuse-parent</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
 
     <modelVersion>4.0.0</modelVersion>
@@ -38,8 +38,8 @@
             org.eclipse.jetty.util.security;version="[8.1,10)",
             org.apache.cxf.service.model;version="[2.7,3.4)",
             org.apache.cxf.*;version="[2.7,3.4)",
-            org.keycloak.adapters.jetty;version="${project.version}",
-            org.keycloak.*;version="${project.version}",
+            org.keycloak.adapters.jetty;version="${fuse.adapter.version}",
+            org.keycloak.*;version="${fuse.adapter.version}",
             *;resolution:=optional
         </keycloak.osgi.import>
         <keycloak.osgi.private>

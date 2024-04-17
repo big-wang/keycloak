@@ -18,7 +18,6 @@
 
 org.keycloak.models.sessions.infinispan.entities.wildfly.GroupListPredicateWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.RealmRemovedSessionEventWFExternalizer
-org.keycloak.models.sessions.infinispan.entities.wildfly.ActionTokenReducedKeyWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.WrapperClusterEventWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.UserConsentsUpdatedEventWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.RoleRemovedEventWFExternalizer
@@ -56,6 +55,7 @@ org.keycloak.models.sessions.infinispan.entities.wildfly.LockEntryWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.ActionTokenValueEntityWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.RoleAddedEventWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.InClientPredicateWFExternalizer
+org.keycloak.models.sessions.infinispan.entities.wildfly.InGroupPredicateWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.UserFullInvalidationEventWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.ClientRemovedSessionEventWFExternalizer
 org.keycloak.models.sessions.infinispan.entities.wildfly.SessionPredicateWFExternalizer

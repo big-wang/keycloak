@@ -20,6 +20,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import static org.keycloak.testsuite.forms.VerifyProfileTest.PERMISSIONS_ALL;
@@ -34,33 +35,39 @@ import java.util.ArrayList;
 import java.util.Collections;
 
 import org.apache.commons.lang3.StringUtils;
+import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.OAuth2Constants;
-import org.keycloak.common.Profile;
 import org.keycloak.events.Details;
 import org.keycloak.events.EventType;
+import org.keycloak.models.UserModel;
 import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.EnableFeature;
+import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
+import org.keycloak.testsuite.AssertEvents;
+import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.forms.RegisterWithUserProfileTest;
 import org.keycloak.testsuite.forms.VerifyProfileTest;
+import org.keycloak.testsuite.pages.AppPage;
 import org.keycloak.testsuite.pages.AppPage.RequestType;
+import org.keycloak.testsuite.pages.ErrorPage;
+import org.keycloak.testsuite.pages.LoginPage;
+import org.keycloak.testsuite.pages.LoginUpdateProfileEditUsernameAllowedPage;
 import org.keycloak.testsuite.util.ClientScopeBuilder;
 import org.keycloak.testsuite.util.KeycloakModelUtils;
+import org.keycloak.testsuite.util.UserBuilder;
 import org.openqa.selenium.By;
 
 /**
+ * Test update-profile required action with custom user profile configurations
  *
  * @author Vlastimil Elias <velias@redhat.com>
- *
  */
-@EnableFeature(value = Profile.Feature.DECLARATIVE_USER_PROFILE)
-@AuthServerContainerExclude(AuthServerContainerExclude.AuthServer.REMOTE)
-public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActionUpdateProfileTest {
+public class RequiredActionUpdateProfileWithUserProfileTest extends AbstractTestRealmKeycloakTest {
 
     protected static final String PASSWORD = "password";
     protected static final String USERNAME1 = "test-user@localhost";
@@ -68,17 +75,23 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
     private static ClientRepresentation client_scope_default;
     private static ClientRepresentation client_scope_optional;
 
-    @Override
-    protected boolean isDynamicForm() {
-        return true;
-    }
+    @Rule
+    public AssertEvents events = new AssertEvents(this);
+
+    @Page
+    protected AppPage appPage;
+
+    @Page
+    protected LoginPage loginPage;
+
+    @Page
+    protected LoginUpdateProfileEditUsernameAllowedPage updateProfilePage;
+
+    @Page
+    protected ErrorPage errorPage;
 
     @Override
     public void configureTestRealm(RealmRepresentation testRealm) {
-        super.configureTestRealm(testRealm);
-
-        VerifyProfileTest.enableDynamicUserProfile(testRealm);
-
         testRealm.setClientScopes(new ArrayList<>());
         testRealm.getClientScopes().add(ClientScopeBuilder.create().name(SCOPE_DEPARTMENT).protocol("openid-connect").build());
         testRealm.getClientScopes().add(ClientScopeBuilder.create().name("profile").protocol("openid-connect").build());
@@ -95,7 +108,26 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
     @Before
     public void beforeTest() {
         VerifyProfileTest.setUserProfileConfiguration(testRealm(),null);
-        super.beforeTest();
+
+        ApiUtil.removeUserByUsername(testRealm(), "test-user@localhost");
+        UserRepresentation user = UserBuilder.create().enabled(true)
+                .username("test-user@localhost")
+                .email("test-user@localhost")
+                .firstName("Tom")
+                .lastName("Brady")
+                .emailVerified(true)
+                .requiredAction(UserModel.RequiredAction.UPDATE_PROFILE.name()).build();
+        ApiUtil.createUserAndResetPasswordWithAdminClient(testRealm(), user, "password");
+
+        ApiUtil.removeUserByUsername(testRealm(), "john-doh@localhost");
+        user = UserBuilder.create().enabled(true)
+                .username("john-doh@localhost")
+                .email("john-doh@localhost")
+                .firstName("John")
+                .lastName("Doh")
+                .emailVerified(true)
+                .requiredAction(UserModel.RequiredAction.UPDATE_PROFILE.name()).build();
+        ApiUtil.createUserAndResetPasswordWithAdminClient(testRealm(), user, "password");
     }
 
     @Test
@@ -142,7 +174,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
         String htmlFormId="kc-update-profile-form";
 
-        //assert fields and groups location in form
+        //assert fields and groups location in form, attributes without a group appear first
         Assert.assertTrue(
                 driver.findElement(
                         By.cssSelector("form#"+htmlFormId+" > div:nth-child(1) > div:nth-child(2) > input#lastName")
@@ -284,7 +316,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
         assertFalse(updateProfilePage.isCancelDisplayed());
 
-        updateProfilePage.update("New first", "", "new@email.com", USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("New first").lastName("").email("new@email.com").submit();
 
         events.expectRequiredAction(EventType.UPDATE_PROFILE).detail(Details.PREVIOUS_FIRST_NAME, "Tom").detail(Details.UPDATED_FIRST_NAME, "New first")
                 .detail(Details.PREVIOUS_LAST_NAME, "Brady")
@@ -300,6 +332,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         assertThat(StringUtils.isEmpty(user.getLastName()), is(true));
         Assert.assertEquals("new@email.com", user.getEmail());
         Assert.assertEquals(USERNAME1, user.getUsername());
+        assertNull(user.getLastName());
     }
 
     @Test
@@ -319,11 +352,11 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
 
         updateProfilePage.assertCurrent();
         //submit with error
-        updateProfilePage.update("First", "L", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("First").lastName("L").email(USERNAME1).submit();
 
         updateProfilePage.assertCurrent();
         //submit OK
-        updateProfilePage.update("First", "Last", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("First").lastName("Last").email(USERNAME1).submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -352,7 +385,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         Assert.assertFalse(updateProfilePage.isDepartmentEnabled());
 
         //update of the other attributes must be successful in this case
-        updateProfilePage.update("First", "Last", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("First").lastName("Last").email(USERNAME1).submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -379,7 +412,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         Assert.assertFalse(updateProfilePage.isDepartmentEnabled());
 
         //update of the other attributes must be successful in this case
-        updateProfilePage.update("First", "Last", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("First").lastName("Last").email(USERNAME1).submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -406,7 +439,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         Assert.assertFalse("'department' field is visible" , updateProfilePage.isDepartmentPresent());
 
         //update of the other attributes must be successful in this case
-        updateProfilePage.update("First", "Last", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("First").lastName("Last").email(USERNAME1).submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -431,11 +464,13 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         //submit with error
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("").submit();
         updateProfilePage.assertCurrent();
 
         //submit OK
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "DepartmentCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("DepartmentCC").submit();
 
         // we also test additional attribute configured to be audited in the event
         events.expectRequiredAction(EventType.UPDATE_PROFILE)
@@ -470,11 +505,13 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         //submit with error
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("").submit();
         updateProfilePage.assertCurrent();
 
         //submit OK
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "DepartmentCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("DepartmentCC").submit();
 
         events.expectRequiredAction(EventType.UPDATE_PROFILE).client(client_scope_optional.getClientId())
                 .detail(Details.PREVIOUS_FIRST_NAME, "Tom").detail(Details.UPDATED_FIRST_NAME, "FirstCC")
@@ -508,11 +545,13 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         //submit with error
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("").submit();
         updateProfilePage.assertCurrent();
 
         //submit OK
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "DepartmentCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("DepartmentCC").submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -540,11 +579,13 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         //submit with error
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("").submit();
         updateProfilePage.assertCurrent();
 
         //submit OK
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "DepartmentCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("DepartmentCC").submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -572,7 +613,8 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         Assert.assertTrue(updateProfilePage.isDepartmentPresent());
-        updateProfilePage.updateWithDepartment("FirstCC", "LastCC", "DepartmentCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1)
+                .department("DepartmentCC").submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -600,7 +642,7 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         updateProfilePage.assertCurrent();
 
         Assert.assertFalse(updateProfilePage.isDepartmentPresent());
-        updateProfilePage.update("FirstCC", "LastCC", USERNAME1, USERNAME1);
+        updateProfilePage.prepareUpdate().username(USERNAME1).firstName("FirstCC").lastName("LastCC").email(USERNAME1).submit();
 
         Assert.assertEquals(RequestType.AUTH_RESPONSE, appPage.getRequestType());
         Assert.assertNotNull(oauth.getCurrentQuery().get(OAuth2Constants.CODE));
@@ -608,16 +650,6 @@ public class RequiredActionUpdateProfileWithUserProfileTest extends RequiredActi
         UserRepresentation user = getUserByUsername(USERNAME1);
         assertEquals("FirstCC", user.getFirstName());
         assertEquals("LastCC", user.getLastName());
-    }
-
-    @Test
-    public void updateProfileWithoutRemoveCustomAttributes() {
-        setUserProfileConfiguration("{\"attributes\": ["
-                + "{\"name\": \"firstName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
-                + "{\"name\": \"lastName\"," + PERMISSIONS_ALL + ", \"required\": {}},"
-                + "{\"name\": \"custom\"," + PERMISSIONS_ALL + "}"
-                + "]}");
-        super.updateProfileWithoutRemoveCustomAttributes();
     }
 
     protected void setUserProfileConfiguration(String configuration) {

@@ -17,56 +17,53 @@
 
 package org.keycloak.quarkus.runtime.cli.command;
 
+import static org.keycloak.config.ClassLoaderOptions.QUARKUS_REMOVED_ARTIFACTS_PROPERTY;
 import static org.keycloak.quarkus.runtime.Environment.getHomePath;
-import static org.keycloak.quarkus.runtime.Environment.isDevMode;
+import static org.keycloak.quarkus.runtime.Environment.isDevProfile;
 import static org.keycloak.quarkus.runtime.cli.Picocli.println;
 import static org.keycloak.quarkus.runtime.configuration.ConfigArgsConfigSource.getAllCliArgs;
 
+import org.keycloak.config.OptionCategory;
 import org.keycloak.quarkus.runtime.Environment;
 import org.keycloak.quarkus.runtime.Messages;
+import org.keycloak.quarkus.runtime.configuration.Configuration;
 
 import io.quarkus.bootstrap.runner.QuarkusEntryPoint;
 import io.quarkus.bootstrap.runner.RunnerClassLoader;
 
 import io.quarkus.runtime.configuration.ProfileManager;
+import io.smallrye.config.ConfigValue;
+import picocli.CommandLine;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Mixin;
+
+import java.util.List;
+import java.util.Optional;
 
 @Command(name = Build.NAME,
         header = "Creates a new and optimized server image.",
         description = {
             "%nCreates a new and optimized server image based on the configuration options passed to this command. Once created, the configuration will be persisted and read during startup without having to pass them over again.",
             "",
-            "Some configuration options require this command to be executed in order to actually change a configuration. For instance",
-            "",
-            "- Change database vendor%n" +
-            "- Enable/disable features%n" +
-            "- Enable/Disable providers or set a default",
-            "",
             "Consider running this command before running the server in production for an optimal runtime."
         },
         footerHeading = "Examples:",
-        footer = "  Optimize the server based on a profile configuration:%n%n"
-                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} --profile=prod ${COMMAND-NAME}%n%n"
-                + "  Change database settings:%n%n"
-                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --db=postgres [--db-url][--db-username][--db-password]%n%n"
+        footer = "  Change the database vendor:%n%n"
+                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --db=postgres%n%n"
                 + "  Enable a feature:%n%n"
-                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --features-<feature_name>=[enabled|disabled]%n%n"
+                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --features=<feature_name>%n%n"
                 + "  Or alternatively, enable all tech preview features:%n%n"
                 + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --features=preview%n%n"
-                + "  Enable metrics:%n%n"
+                + "  Enable health endpoints:%n%n"
+                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --health-enabled=true%n%n"
+                + "  Enable metrics endpoints:%n%n"
                 + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --metrics-enabled=true%n%n"
                 + "  Change the relative path:%n%n"
-                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --http-relative-path=/auth%n%n"
-                + "You can also use the \"--auto-build\" option when starting the server to avoid running this command every time you change a configuration:%n%n"
-                + "    $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} start --auto-build <OPTIONS>%n%n"
-                + "By doing that you have an additional overhead when the server is starting.%n%n"
-                + "Use '${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --help-all' to list all available options, including the start options.")
+                + "      $ ${PARENT-COMMAND-FULL-NAME:-$PARENTCOMMAND} ${COMMAND-NAME} --http-relative-path=/auth%n")
 public final class Build extends AbstractCommand implements Runnable {
 
     public static final String NAME = "build";
 
-    @Mixin
+    @CommandLine.Mixin
     HelpAllMixin helpAllMixin;
 
     @Override
@@ -74,13 +71,17 @@ public final class Build extends AbstractCommand implements Runnable {
         exitWithErrorIfDevProfileIsSetAndNotStartDev();
 
         System.setProperty("quarkus.launch.rebuild", "true");
+        validateConfig();
+
         println(spec.commandLine(), "Updating the configuration and installing your custom providers, if any. Please wait.");
 
         try {
+            configureBuildClassLoader();
+
             beforeReaugmentationOnWindows();
             QuarkusEntryPoint.main();
 
-            if (!isDevMode()) {
+            if (!isDevProfile()) {
                 println(spec.commandLine(), "Server configuration updated and persisted. Run the following command to review the configuration:\n");
                 println(spec.commandLine(), "\t" + Environment.getCommand() + " show-config\n");
             }
@@ -89,6 +90,24 @@ public final class Build extends AbstractCommand implements Runnable {
         } finally {
             cleanTempResources();
         }
+    }
+
+    private static void configureBuildClassLoader() {
+        // ignored artifacts must be set prior to starting re-augmentation
+        Optional.ofNullable(Configuration.getCurrentBuiltTimeProperty(QUARKUS_REMOVED_ARTIFACTS_PROPERTY))
+                .map(ConfigValue::getValue)
+                .ifPresent(s -> System.setProperty(QUARKUS_REMOVED_ARTIFACTS_PROPERTY, s));
+    }
+
+    @Override
+    public boolean includeBuildTime() {
+        return true;
+    }
+
+    @Override
+    public List<OptionCategory> getOptionCategories() {
+        // all options should work for the build command, otherwise re-augmentation might fail due to unknown options
+        return super.getOptionCategories();
     }
 
     private void exitWithErrorIfDevProfileIsSetAndNotStartDev() {
@@ -116,5 +135,10 @@ public final class Build extends AbstractCommand implements Runnable {
             // only needed for dev/testing purposes
             getHomePath().resolve("quarkus-artifact.properties").toFile().delete();
         }
+    }
+
+    @Override
+    public String getName() {
+        return NAME;
     }
 }

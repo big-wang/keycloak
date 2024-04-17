@@ -1,13 +1,13 @@
 /*
  * Copyright 2020 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,11 +16,17 @@
  */
 package org.keycloak.testsuite.model;
 
+import org.junit.Assert;
 import org.keycloak.Config.Scope;
 import org.keycloak.authorization.AuthorizationSpi;
 import org.keycloak.authorization.DefaultAuthorizationProviderFactory;
+import org.keycloak.authorization.policy.provider.PolicyProviderFactory;
+import org.keycloak.authorization.policy.provider.PolicySpi;
 import org.keycloak.authorization.store.StoreFactorySpi;
 import org.keycloak.cluster.ClusterSpi;
+import org.keycloak.common.Profile;
+import org.keycloak.common.profile.PropertiesProfileConfigResolver;
+import org.keycloak.common.util.Time;
 import org.keycloak.component.ComponentFactoryProviderFactory;
 import org.keycloak.component.ComponentFactorySpi;
 import org.keycloak.events.EventStoreSpi;
@@ -47,21 +53,33 @@ import org.keycloak.provider.ProviderManager;
 import org.keycloak.provider.Spi;
 import org.keycloak.services.DefaultComponentFactoryProviderFactory;
 import org.keycloak.services.DefaultKeycloakSessionFactory;
+import org.keycloak.services.resteasy.ResteasyKeycloakSessionFactory;
+import org.keycloak.storage.DatastoreProviderFactory;
+import org.keycloak.storage.DatastoreSpi;
 import org.keycloak.timer.TimerSpi;
 import com.google.common.collect.ImmutableSet;
+
+import java.lang.management.LockInfo;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -83,7 +101,6 @@ import org.junit.rules.TestWatcher;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 import org.keycloak.models.DeploymentStateProviderFactory;
-import org.keycloak.models.dblock.DBLockSpi;
 
 /**
  * Base of testcases that operate on session level. The tests derived from this class
@@ -99,7 +116,6 @@ import org.keycloak.models.dblock.DBLockSpi;
  * @author hmlnarik
  */
 public abstract class KeycloakModelTest {
-
     private static final Logger LOG = Logger.getLogger(KeycloakModelParameters.class);
     private static final AtomicInteger FACTORY_COUNT = new AtomicInteger();
     protected final Logger log = Logger.getLogger(getClass());
@@ -116,9 +132,7 @@ public abstract class KeycloakModelTest {
                 testClass = testClass.getSuperclass();
             }
             List<Class<? extends Provider>> notFound = st
-              .filter(rp -> rp.only().length == 0 
-                ? getFactory().getProviderFactory(rp.value()) == null
-                : Stream.of(rp.only()).allMatch(provider -> getFactory().getProviderFactory(rp.value(), provider) == null))
+              .filter(KeycloakModelTest::checkProviderAvailability)
               .map(RequireProvider::value)
               .collect(Collectors.toList());
             Assume.assumeThat("Some required providers not found", notFound, Matchers.empty());
@@ -130,6 +144,25 @@ public abstract class KeycloakModelTest {
             return res;
         }
     };
+
+    // Returns true if annotation requirement is not met
+    private static boolean checkProviderAvailability(RequireProvider annotation) {
+        Set<String> allFactories = getFactory().getProviderFactoriesStream(annotation.value()).map(ProviderFactory::getId).collect(Collectors.toSet());
+        List<String> only = Arrays.asList(annotation.only());
+        List<String> exclude = Arrays.asList(annotation.exclude());
+
+        // There is no factory for required provider
+        if (allFactories.isEmpty()) return true;
+
+        // Remove excluded ids
+        allFactories.removeIf(exclude::contains);
+
+        // Remove not matching only
+        allFactories.removeIf(id -> !only.isEmpty() && !only.contains(id));
+
+        // If there is no factory return true
+        return allFactories.isEmpty();
+    }
 
     @Rule
     public final TestRule guaranteeRequiredFactoryOnMethod = new TestRule() {
@@ -154,7 +187,7 @@ public abstract class KeycloakModelTest {
                     if (getFactory().getProviderFactory(providerClass) == null) {
                         return new Statement() {
                             @Override
-                            public void evaluate() throws Throwable {
+                            public void evaluate() {
                                 throw new AssumptionViolatedException("Provider must exist: " + providerClass);
                             }
                         };
@@ -164,7 +197,7 @@ public abstract class KeycloakModelTest {
                     if (notFoundAny) {
                         return new Statement() {
                             @Override
-                            public void evaluate() throws Throwable {
+                            public void evaluate() {
                                 throw new AssumptionViolatedException("Provider must exist: " + providerClass + " one of [" + String.join(",", only) + "]");
                             }
                         };
@@ -195,11 +228,11 @@ public abstract class KeycloakModelTest {
 
     private static final Set<Class<? extends Spi>> ALLOWED_SPIS = ImmutableSet.<Class<? extends Spi>>builder()
       .add(AuthorizationSpi.class)
+      .add(PolicySpi.class)
       .add(ClientScopeSpi.class)
       .add(ClientSpi.class)
       .add(ComponentFactorySpi.class)
       .add(ClusterSpi.class)
-      .add(DBLockSpi.class)
       .add(EventStoreSpi.class)
       .add(ExecutorsSpi.class)
       .add(GroupSpi.class)
@@ -211,13 +244,16 @@ public abstract class KeycloakModelTest {
       .add(UserLoginFailureSpi.class)
       .add(UserSessionSpi.class)
       .add(UserSpi.class)
+      .add(DatastoreSpi.class)
       .build();
 
     private static final Set<Class<? extends ProviderFactory>> ALLOWED_FACTORIES = ImmutableSet.<Class<? extends ProviderFactory>>builder()
       .add(ComponentFactoryProviderFactory.class)
       .add(DefaultAuthorizationProviderFactory.class)
+      .add(PolicyProviderFactory.class)
       .add(DefaultExecutorsProviderFactory.class)
       .add(DeploymentStateProviderFactory.class)
+      .add(DatastoreProviderFactory.class)
       .build();
 
     protected static final List<KeycloakModelParameters> MODEL_PARAMETERS;
@@ -234,9 +270,9 @@ public abstract class KeycloakModelTest {
           Stream.of(basicParameters),
           Stream.of(System.getProperty("keycloak.model.parameters", "").split("\\s*,\\s*"))
             .filter(s -> s != null && ! s.trim().isEmpty())
-            .map(cn -> { try { return Class.forName(cn.indexOf('.') >= 0 ? cn : ("org.keycloak.testsuite.model.parameters." + cn)); } catch (Exception e) { LOG.error("Cannot find " + cn); return null; }})
+            .map(cn -> { try { return Class.forName(cn.indexOf('.') >= 0 ? cn : ("org.keycloak.testsuite.model.parameters." + cn)); } catch (Exception e) { throw new RuntimeException("Cannot find class " + cn, e); }})
             .filter(Objects::nonNull)
-            .map(c -> { try { return c.getDeclaredConstructor().newInstance(); } catch (Exception e) { LOG.error("Cannot instantiate " + c); return null; }} )
+            .map(c -> { try { return c.getDeclaredConstructor().newInstance(); } catch (Exception e) { throw new RuntimeException("Cannot instantiate class " + c, e); }} )
             .filter(KeycloakModelParameters.class::isInstance)
             .map(KeycloakModelParameters.class::cast)
           )
@@ -257,7 +293,6 @@ public abstract class KeycloakModelTest {
      * local to the thread that calls this method, allowing for per-thread customization. This in turn allows
      * testing of several parallel session factories which can be used to simulate several servers
      * running in parallel.
-     * @return
      */
     public static KeycloakSessionFactory createKeycloakSessionFactory() {
         int factoryIndex = FACTORY_COUNT.incrementAndGet();
@@ -270,7 +305,14 @@ public abstract class KeycloakModelTest {
 
         LOG.debugf("Creating factory %d in %s using the following configuration:\n    %s", factoryIndex, threadName, CONFIG);
 
-        DefaultKeycloakSessionFactory res = new DefaultKeycloakSessionFactory() {
+        DefaultKeycloakSessionFactory res = new ResteasyKeycloakSessionFactory() {
+
+            @Override
+            public void init() {
+                Profile.configure(new PropertiesProfileConfigResolver(System.getProperties()));
+                super.init();
+            }
+
             @Override
             protected boolean isEnabled(ProviderFactory factory, Scope scope) {
                 return super.isEnabled(factory, scope) && isFactoryAllowed(factory);
@@ -295,9 +337,14 @@ public abstract class KeycloakModelTest {
                 return "KeycloakSessionFactory " + factoryIndex + " (from " + threadName + " thread)";
             }
         };
-        res.init();
-        res.publish(new PostMigrationEvent());
-        return res;
+        try {
+            res.init();
+            res.publish(new PostMigrationEvent(res));
+            return res;
+        } catch (RuntimeException ex) {
+            res.close();
+            throw ex;
+        }
     }
 
     /**
@@ -320,33 +367,119 @@ public abstract class KeycloakModelTest {
     /**
      * Runs the given {@code task} in {@code numThreads} parallel threads, each thread operating
      * in the context of a fresh {@link KeycloakSessionFactory} independent of each other thread.
+     * <p>
+     * Will throw an exception when the thread throws an exception or if the thread doesn't complete in time.
      *
      * @see #inIndependentFactory
      *
-     * @param numThreads
-     * @param timeoutSeconds
-     * @param task
-     * @throws InterruptedException
      */
     public static void inIndependentFactories(int numThreads, int timeoutSeconds, Runnable task) throws InterruptedException {
-        ExecutorService es = Executors.newFixedThreadPool(numThreads);
+        enabledContentionMonitoring();
+        // memorize threads created to be able to retrieve their stacktrace later if they don't terminate
+        LinkedList<Thread> threads = new LinkedList<>();
+        ExecutorService es = Executors.newFixedThreadPool(numThreads, new ThreadFactory() {
+            final ThreadFactory tf = Executors.defaultThreadFactory();
+            @Override
+            public Thread newThread(Runnable r) {
+                {
+                    Thread thread = tf.newThread(r);
+                    threads.add(thread);
+                    return thread;
+                }
+            }
+        });
         try {
-            Callable<?> independentTask = () -> inIndependentFactory(() -> { task.run(); return null; });
-            es.invokeAll(
-              IntStream.range(0, numThreads)
-                .mapToObj(i -> independentTask)
-                .collect(Collectors.toList()),
-              timeoutSeconds, TimeUnit.SECONDS
-            );
+            CountDownLatch start = new CountDownLatch(numThreads);
+            CountDownLatch stop = new CountDownLatch(numThreads);
+            Callable<?> independentTask = () -> inIndependentFactory(() -> {
+
+                // use the latch to ensure that all caches are online while the transaction below runs to avoid a RemoteException
+                start.countDown();
+                start.await();
+
+                try {
+                    task.run();
+
+                    // use the latch to ensure that all caches are online while the transaction above runs to avoid a RemoteException
+                    // otherwise might fail with "Cannot wire or start components while the registry is not running" during shutdown
+                    // https://issues.redhat.com/browse/ISPN-9761
+                } finally {
+                    stop.countDown();
+                }
+                stop.await();
+
+                return null;
+            });
+
+            // submit tasks, and wait for the results without cancelling execution so that we'll be able to analyze the thread dump
+            List<? extends Future<?>> tasks = IntStream.range(0, numThreads)
+                    .mapToObj(i -> independentTask)
+                    .map(es::submit).collect(Collectors.toList());
+            long limit = System.currentTimeMillis() + timeoutSeconds * 1000L;
+            for (Future<?> future : tasks) {
+                long limitForTask = limit - System.currentTimeMillis();
+                if (limitForTask > 0) {
+                    try {
+                        future.get(limitForTask, TimeUnit.MILLISECONDS);
+                    } catch (ExecutionException e) {
+                        if (e.getCause() instanceof AssertionError) {
+                            throw (AssertionError) e.getCause();
+                        } else {
+                            LOG.error("Execution didn't complete", e);
+                            Assert.fail("Execution didn't complete: " + e.getMessage());
+                        }
+                    } catch (TimeoutException e) {
+                        failWithThreadDump(threads, e);
+                    }
+                } else {
+                    failWithThreadDump(threads, null);
+                }
+            }
         } finally {
             es.shutdownNow();
         }
+        // wait for shutdown executor pool, but not if there has been an exception
+        if (!es.awaitTermination(10, TimeUnit.SECONDS)) {
+            failWithThreadDump(threads, null);
+        }
+    }
+
+    private static void enabledContentionMonitoring() {
+        if (!ManagementFactory.getThreadMXBean().isThreadContentionMonitoringEnabled()) {
+            ManagementFactory.getThreadMXBean().setThreadContentionMonitoringEnabled(true);
+        }
+    }
+
+    private static void failWithThreadDump(LinkedList<Thread> threads, Exception e) {
+        ThreadInfo[] infos = ManagementFactory.getThreadMXBean().dumpAllThreads(true, true);
+        List<String> liveStacks = Arrays.stream(infos).map(thread -> {
+            StringBuilder sb = new StringBuilder();
+            if (threads.stream().anyMatch(t -> t.getId() == thread.getThreadId())) {
+                sb.append("[OurThreadPool] ");
+            }
+            sb.append(thread.getThreadName()).append(" (").append(thread.getThreadState()).append("):");
+            LockInfo lockInfo = thread.getLockInfo();
+            if (lockInfo != null) {
+                sb.append(" locked on ").append(lockInfo);
+                if (thread.getWaitedTime() != -1) {
+                  sb.append(" waiting for ").append(thread.getWaitedTime()).append(" ms");
+                }
+                if (thread.getBlockedTime() != -1) {
+                    sb.append(" blocked for ").append(thread.getBlockedTime()).append(" ms");
+                }
+            }
+            sb.append("\n");
+            for (StackTraceElement traceElement : thread.getStackTrace()) {
+                sb.append("\tat ").append(traceElement).append("\n");
+            }
+            return sb.toString();
+        }).collect(Collectors.toList());
+        throw new AssertionError("threads didn't terminate in time: " + liveStacks, e);
     }
 
     /**
      * Runs the given {@code task} in a context of a fresh {@link KeycloakSessionFactory} which is created before
      * running the task and destroyed afterwards.
-     * @return
      */
     public static <T> T inIndependentFactory(Callable<T> task) {
         if (USE_DEFAULT_FACTORY) {
@@ -393,16 +526,18 @@ public abstract class KeycloakModelTest {
     }
 
     @Before
-    public void createEnvironment() {
+    public final void createEnvironment() {
+        setTimeOffset(0);
         USE_DEFAULT_FACTORY = isUseSameKeycloakSessionFactoryForAllThreads();
         KeycloakModelUtils.runJobInTransaction(getFactory(), this::createEnvironment);
     }
 
     @After
-    public void cleanEnvironment() {
+    public final void cleanEnvironment() {
         if (getFactory() == null) {
             reinitializeKeycloakSessionFactory();
         }
+        setTimeOffset(0);
         KeycloakModelUtils.runJobInTransaction(getFactory(), this::cleanEnvironment);
     }
 
@@ -410,17 +545,14 @@ public abstract class KeycloakModelTest {
         return MODEL_PARAMETERS.stream().flatMap(mp -> mp.getParameters(clazz)).filter(Objects::nonNull);
     }
 
-    protected <T> void withEach(Class<T> parameterClazz, Consumer<T> what) {
-        getParameters(parameterClazz).forEach(what);
-    }
-
     protected <T> void inRolledBackTransaction(T parameter, BiConsumer<KeycloakSession, T> what) {
-        KeycloakSession session = getFactory().create();
-        session.getTransactionManager().begin();
+        try (KeycloakSession session = getFactory().create()) {
+            session.getTransactionManager().begin();
 
-        what.accept(session, parameter);
+            what.accept(session, parameter);
 
-        session.getTransactionManager().rollback();
+            session.getTransactionManager().setRollbackOnly();
+        }
     }
 
     protected <T, R> R inComittedTransaction(T parameter, BiFunction<KeycloakSession, T, R> what) {
@@ -436,8 +568,7 @@ public abstract class KeycloakModelTest {
     }
 
     protected <T, R> R inComittedTransaction(T parameter, BiFunction<KeycloakSession, T, R> what, BiConsumer<KeycloakSession, T> onCommit, BiConsumer<KeycloakSession, T> onRollback) {
-        AtomicReference<R> res = new AtomicReference<>();
-        KeycloakModelUtils.runJobInTransaction(getFactory(), session -> {
+        return KeycloakModelUtils.runJobInTransactionWithResult(getFactory(), session -> {
             session.getTransactionManager().enlistAfterCompletion(new AbstractKeycloakTransaction() {
                 @Override
                 protected void commitImpl() {
@@ -449,19 +580,14 @@ public abstract class KeycloakModelTest {
                     if (onRollback != null) { onRollback.accept(session, parameter); }
                 }
             });
-            res.set(what.apply(session, parameter));
+            return what.apply(session, parameter);
         });
-        return res.get();
     }
 
     /**
      * Convenience method for {@link #inComittedTransaction(java.util.function.Consumer)} that
      * obtains realm model from the session and puts it into session context before
      * running the {@code what} task.
-     * @param <R>
-     * @param realmId
-     * @param what
-     * @return
      */
     protected <R> R withRealm(String realmId, BiFunction<KeycloakSession, RealmModel, R> what) {
         return inComittedTransaction(session -> {
@@ -473,5 +599,34 @@ public abstract class KeycloakModelTest {
 
     protected boolean isUseSameKeycloakSessionFactoryForAllThreads() {
         return false;
+    }
+
+    protected void sleep(long timeMs) {
+        try {
+            Thread.sleep(timeMs);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(ex);
+        }
+    }
+
+    protected static RealmModel createRealm(KeycloakSession s, String name) {
+        RealmModel realm = s.realms().getRealmByName(name);
+        if (realm != null) {
+            // The previous test didn't clean up the realm for some reason, cleanup now
+            s.realms().removeRealm(realm.getId());
+        }
+        realm = s.realms().createRealm(name);
+        return realm;
+    }
+
+    /**
+     * Moves time on the Keycloak server
+     * @param seconds time offset in seconds by which Keycloak server time is moved
+     */
+    protected void setTimeOffset(int seconds) {
+        inComittedTransaction(session -> {
+            Time.setOffset(seconds);
+        });
     }
 }

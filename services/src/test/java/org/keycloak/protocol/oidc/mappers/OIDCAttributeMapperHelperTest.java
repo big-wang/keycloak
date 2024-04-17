@@ -18,7 +18,9 @@ package org.keycloak.protocol.oidc.mappers;
 
 import org.hamcrest.Matchers;
 import org.junit.Test;
-import static org.junit.Assert.assertThat;
+import org.keycloak.utils.JsonUtils;
+
+import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
  *
@@ -28,17 +30,17 @@ public class OIDCAttributeMapperHelperTest {
 
     @Test
     public void testSplitClaimPath() {
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath(""),          Matchers.empty());
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("a"),         Matchers.contains("a"));
+        assertThat(JsonUtils.splitClaimPath(""),          Matchers.empty());
+        assertThat(JsonUtils.splitClaimPath("a"),         Matchers.contains("a"));
 
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("a.b"),       Matchers.contains("a", "b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("a\\.b"),     Matchers.contains("a.b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("a\\\\.b"),   Matchers.contains("a\\", "b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("a\\\\\\.b"), Matchers.contains("a\\.b"));
+        assertThat(JsonUtils.splitClaimPath("a.b"),       Matchers.contains("a", "b"));
+        assertThat(JsonUtils.splitClaimPath("a\\.b"),     Matchers.contains("a.b"));
+        assertThat(JsonUtils.splitClaimPath("a\\\\.b"),   Matchers.contains("a\\", "b"));
+        assertThat(JsonUtils.splitClaimPath("a\\\\\\.b"), Matchers.contains("a\\.b"));
 
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("c.a\\\\.b"),   Matchers.contains("c", "a\\", "b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("c.a\\\\\\.b"), Matchers.contains("c", "a\\.b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("c\\\\\\.b.a\\\\\\.b"), Matchers.contains("c\\.b", "a\\.b"));
-        assertThat(OIDCAttributeMapperHelper.splitClaimPath("c\\h\\.b.a\\\\\\.b"), Matchers.contains("ch.b", "a\\.b"));
+        assertThat(JsonUtils.splitClaimPath("c.a\\\\.b"),   Matchers.contains("c", "a\\", "b"));
+        assertThat(JsonUtils.splitClaimPath("c.a\\\\\\.b"), Matchers.contains("c", "a\\.b"));
+        assertThat(JsonUtils.splitClaimPath("c\\\\\\.b.a\\\\\\.b"), Matchers.contains("c\\.b", "a\\.b"));
+        assertThat(JsonUtils.splitClaimPath("c\\h\\.b.a\\\\\\.b"), Matchers.contains("ch.b", "a\\.b"));
     }
 }

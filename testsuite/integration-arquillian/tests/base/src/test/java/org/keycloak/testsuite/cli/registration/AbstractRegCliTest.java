@@ -2,7 +2,6 @@ package org.keycloak.testsuite.cli.registration;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.ClientInitialAccessResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.authentication.authenticators.client.ClientIdAndSecretAuthenticator;
@@ -352,7 +351,9 @@ public abstract class AbstractRegCliTest extends AbstractCliTest {
 
     private ComponentRepresentation findPolicyByProviderAndAuth(String realm, String providerId, String authType) {
         // Change the policy to avoid checking hosts
-        List<ComponentRepresentation> reps = adminClient.realm(realm).components().query(realm, ClientRegistrationPolicy.class.getName());
+        RealmResource realmResource = adminClient.realm(realm);
+        List<ComponentRepresentation> reps = realmResource.components().query(
+                realmResource.toRepresentation().getId(), ClientRegistrationPolicy.class.getName());
         for (ComponentRepresentation rep : reps) {
             if (rep.getSubType().equals(authType) && rep.getProviderId().equals(providerId)) {
                 return rep;
@@ -485,7 +486,7 @@ public abstract class AbstractRegCliTest extends AbstractCliTest {
         exe = execute("delete test-client --no-config --server " + serverUrl + " --realm test " + credentials + " " + extraOptions);
 
         assertExitCodeAndStreamSizes(exe, 1, 0, 2);
-        Assert.assertEquals("error message", "Client not found [invalid_request]", exe.stderrLines().get(1));
+        Assert.assertEquals("error message", "Client not found [invalid_request]", exe.stderrLines().get(exe.stderrLines().size() - 1));
 
         lastModified2 = configFile.exists() ? configFile.lastModified() : 0;
         Assert.assertEquals("config file not modified", lastModified, lastModified2);

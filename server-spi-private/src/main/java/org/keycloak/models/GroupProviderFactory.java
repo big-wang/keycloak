@@ -19,5 +19,9 @@ package org.keycloak.models;
 
 import org.keycloak.provider.ProviderFactory;
 
-public interface GroupProviderFactory extends ProviderFactory<GroupProvider> {
+public interface GroupProviderFactory<T extends GroupProvider> extends ProviderFactory<T> {
+
+    default boolean escapeSlashesInGroupPath() {
+        return GroupProvider.DEFAULT_ESCAPE_SLASHES;
+    }
 }

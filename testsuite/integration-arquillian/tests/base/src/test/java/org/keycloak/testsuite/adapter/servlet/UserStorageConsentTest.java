@@ -22,7 +22,6 @@ import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.keycloak.OAuth2Constants;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.ClientScopeModel;
@@ -42,9 +41,11 @@ import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.arquillian.annotation.AppServerContainer;
 import org.keycloak.testsuite.federation.UserMapStorageFactory;
 import org.keycloak.testsuite.pages.ConsentPage;
+import org.keycloak.testsuite.pages.InfoPage;
+import org.keycloak.testsuite.pages.LogoutConfirmPage;
 import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -64,7 +65,6 @@ import static org.keycloak.testsuite.util.WaitUtils.waitForPageToLoad;
  */
 @AppServerContainer(ContainerConstants.APP_SERVER_UNDERTOW)
 @AppServerContainer(ContainerConstants.APP_SERVER_WILDFLY)
-@AppServerContainer(ContainerConstants.APP_SERVER_WILDFLY_DEPRECATED)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP6)
 @AppServerContainer(ContainerConstants.APP_SERVER_EAP71)
@@ -75,6 +75,12 @@ public class UserStorageConsentTest extends AbstractServletsAdapterTest {
 
     @Page
     protected ConsentPage consentPage;
+
+    @Page
+    protected LogoutConfirmPage logoutConfirmPage;
+
+    @Page
+    protected InfoPage infoPage;
 
     @Deployment(name = ProductPortal.DEPLOYMENT_NAME)
     protected static WebArchive productPortal() {
@@ -172,11 +178,18 @@ public class UserStorageConsentTest extends AbstractServletsAdapterTest {
         consentPage.confirm();
         assertCurrentUrlEquals(productPortal.toString());
         Assert.assertTrue(driver.getPageSource().contains("iPhone"));
+
         String logoutUri = OIDCLoginProtocolService.logoutUrl(authServerPage.createUriBuilder())
-                .queryParam(OAuth2Constants.REDIRECT_URI, productPortal.toString())
                 .build("demo").toString();
 
         driver.navigate().to(logoutUri);
+        waitForPageToLoad();
+        logoutConfirmPage.assertCurrent();
+        logoutConfirmPage.confirmLogout();
+        waitForPageToLoad();
+        infoPage.assertCurrent();
+
+        driver.navigate().to(productPortal.toString());
         waitForPageToLoad();
         assertCurrentUrlStartsWithLoginUrlOf(testRealmPage);
         productPortal.navigateTo();
@@ -186,6 +199,9 @@ public class UserStorageConsentTest extends AbstractServletsAdapterTest {
         Assert.assertTrue(driver.getPageSource().contains("iPhone"));
 
         driver.navigate().to(logoutUri);
+        waitForPageToLoad();
+        logoutConfirmPage.assertCurrent();
+        logoutConfirmPage.confirmLogout();
         adminClient.realm("demo").users().delete(uid).close();
     }
 }

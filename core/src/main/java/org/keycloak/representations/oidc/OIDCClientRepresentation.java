@@ -102,6 +102,9 @@ public class OIDCClientRepresentation {
 
     private String tls_client_auth_subject_dn;
 
+    // OAuth 2.0 DPoP
+    private Boolean dpop_bound_access_tokens;
+
     // OIDC Session Management
     private List<String> post_logout_redirect_uris;
 
@@ -143,6 +146,8 @@ public class OIDCClientRepresentation {
     private Boolean require_pushed_authorization_requests;
 
     private String frontchannel_logout_uri;
+
+    private Boolean frontchannel_logout_session_required;
 
     public List<String> getRedirectUris() {
         return redirect_uris;
@@ -474,6 +479,14 @@ public class OIDCClientRepresentation {
         this.tls_client_certificate_bound_access_tokens = tls_client_certificate_bound_access_tokens;
     }
 
+    public Boolean getDpopBoundAccessTokens() {
+        return dpop_bound_access_tokens;
+    }
+
+    public void setDpopBoundAccessTokens(Boolean dpop_bound_access_tokens) {
+        this.dpop_bound_access_tokens = dpop_bound_access_tokens;
+    }
+
     public String getBackchannelLogoutUri() {
         return backchannel_logout_uri;
     }
@@ -568,5 +581,13 @@ public class OIDCClientRepresentation {
 
     public void setFrontChannelLogoutUri(String frontchannel_logout_uri) {
         this.frontchannel_logout_uri = frontchannel_logout_uri;
+    }
+
+    public Boolean getFrontchannelLogoutSessionRequired() {
+        return frontchannel_logout_session_required;
+    }
+
+    public void setFrontchannelLogoutSessionRequired(Boolean frontchannel_logout_session_required) {
+        this.frontchannel_logout_session_required = frontchannel_logout_session_required;
     }
 }

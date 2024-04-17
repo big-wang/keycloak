@@ -40,6 +40,8 @@ public class TokenUtil {
 
     public static final String TOKEN_TYPE_BEARER = "Bearer";
 
+    public static final String TOKEN_TYPE_DPOP = "DPoP";
+
     public static final String TOKEN_TYPE_KEYCLOAK_ID = "Serialized-ID";
 
     public static final String TOKEN_TYPE_ID = "ID";
@@ -154,7 +156,13 @@ public class TokenUtil {
     }
 
     public static String jweKeyEncryptionEncode(Key encryptionKEK, byte[] contentBytes, String algAlgorithm, String encAlgorithm, String kid, JWEAlgorithmProvider jweAlgorithmProvider, JWEEncryptionProvider jweEncryptionProvider) throws JWEException {
-        JWEHeader jweHeader = new JWEHeader(algAlgorithm, encAlgorithm, null, kid, "JWT");
+        return jweKeyEncryptionEncode(encryptionKEK, contentBytes, algAlgorithm, encAlgorithm, kid, jweAlgorithmProvider, jweEncryptionProvider, "JWT");
+    }
+
+    public static String jweKeyEncryptionEncode(Key encryptionKEK, byte[] contentBytes, String algAlgorithm,
+                                                String encAlgorithm, String kid, JWEAlgorithmProvider jweAlgorithmProvider,
+                                                JWEEncryptionProvider jweEncryptionProvider, String jweContentType) throws JWEException {
+        JWEHeader jweHeader = new JWEHeader(algAlgorithm, encAlgorithm, null, kid, jweContentType);
         return jweKeyEncryptionEncode(encryptionKEK, contentBytes, jweHeader, jweAlgorithmProvider, jweEncryptionProvider);
     }
 
@@ -197,7 +205,7 @@ public class TokenUtil {
             default: throw new IllegalArgumentException("Bad size for Encryption key: " + aesKey + ". Valid sizes are 16, 24, 32.");
         }
 
-        JWEHeader jweHeader = new JWEHeader(JWEConstants.DIR, encAlgorithm, null);
+        JWEHeader jweHeader = new JWEHeader(JWEConstants.DIRECT, encAlgorithm, null);
         JWE jwe = new JWE()
                 .header(jweHeader)
                 .content(contentBytes);

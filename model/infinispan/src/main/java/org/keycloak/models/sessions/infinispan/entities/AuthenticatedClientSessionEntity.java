@@ -27,6 +27,7 @@ import org.infinispan.commons.marshall.Externalizer;
 import org.infinispan.commons.marshall.MarshallUtil;
 import org.infinispan.commons.marshall.SerializeWith;
 import org.jboss.logging.Logger;
+import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.sessions.infinispan.changes.SessionEntityWrapper;
 import org.keycloak.models.sessions.infinispan.util.KeycloakMarshallUtil;
 import java.util.UUID;
@@ -42,6 +43,7 @@ public class AuthenticatedClientSessionEntity extends SessionEntity {
 
     // Metadata attribute, which contains the last timestamp available on remoteCache. Used in decide whether we need to write to remoteCache (DC) or not
     public static final String LAST_TIMESTAMP_REMOTE = "lstr";
+    public static final String CLIENT_ID_NOTE = "clientId";
 
     private String authMethod;
     private String redirectUri;
@@ -54,6 +56,8 @@ public class AuthenticatedClientSessionEntity extends SessionEntity {
     private int currentRefreshTokenUseCount;
 
     private final UUID id;
+
+    private transient String userSessionId;
 
     public AuthenticatedClientSessionEntity(UUID id) {
         this.id = id;
@@ -81,6 +85,28 @@ public class AuthenticatedClientSessionEntity extends SessionEntity {
 
     public void setTimestamp(int timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public int getUserSessionStarted() {
+        String started = getNotes().get(AuthenticatedClientSessionModel.USER_SESSION_STARTED_AT_NOTE);
+        return started == null ? timestamp : Integer.parseInt(started);
+    }
+
+    public int getStarted() {
+        String started = getNotes().get(AuthenticatedClientSessionModel.STARTED_AT_NOTE);
+        return started == null ? timestamp : Integer.parseInt(started);
+    }
+
+    public boolean isUserSessionRememberMe() {
+        return Boolean.parseBoolean(getNotes().get(AuthenticatedClientSessionModel.USER_SESSION_REMEMBER_ME_NOTE));
+    }
+
+    public String getClientId() {
+        return getNotes().get(CLIENT_ID_NOTE);
+    }
+
+    public void setClientId(String clientId) {
+        getNotes().put(CLIENT_ID_NOTE, clientId);
     }
 
     public String getAction() {
@@ -164,6 +190,14 @@ public class AuthenticatedClientSessionEntity extends SessionEntity {
         logger.debugf("Updating client session entity %s. timestamp=%d, timestampRemote=%d", getId(), getTimestamp(), timestampRemote);
 
         return entityWrapper;
+    }
+
+    public String getUserSessionId() {
+        return userSessionId;
+    }
+
+    public void setUserSessionId(String userSessionId) {
+        this.userSessionId = userSessionId;
     }
 
     public static class ExternalizerImpl implements Externalizer<AuthenticatedClientSessionEntity> {

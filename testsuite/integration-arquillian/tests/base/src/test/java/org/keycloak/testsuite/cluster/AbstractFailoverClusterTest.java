@@ -26,9 +26,12 @@ import org.junit.BeforeClass;
 import org.keycloak.models.UserModel;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.keycloak.testsuite.Assert;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.pages.AppPage;
+import org.keycloak.testsuite.pages.InfoPage;
 import org.keycloak.testsuite.pages.LoginPage;
+import org.keycloak.testsuite.pages.LogoutConfirmPage;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.URLUtils;
 import org.keycloak.testsuite.util.UserBuilder;
@@ -58,6 +61,12 @@ public abstract class AbstractFailoverClusterTest extends AbstractClusterTest {
 
     @Page
     protected AppPage appPage;
+
+    @Page
+    protected LogoutConfirmPage logoutConfirmPage;
+
+    @Page
+    protected InfoPage infoPage;
 
     @BeforeClass
     public static void modifyAppRoot() {
@@ -129,7 +138,15 @@ public abstract class AbstractFailoverClusterTest extends AbstractClusterTest {
     }
 
     protected void logout() {
-        appPage.logout();
+        String logoutUrl = oauth.getLogoutUrl().build();
+        driver.navigate().to(logoutUrl);
+
+        logoutConfirmPage.assertCurrent();
+        logoutConfirmPage.confirmLogout();
+
+        // Info page present
+        infoPage.assertCurrent();
+        Assert.assertEquals("You are logged out", infoPage.getInfo());
     }
 
     protected Cookie verifyLoggedIn(Cookie sessionCookieForVerification) {

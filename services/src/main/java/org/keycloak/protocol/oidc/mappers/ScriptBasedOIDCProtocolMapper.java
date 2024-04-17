@@ -46,7 +46,7 @@ import java.util.List;
  * @author <a href="mailto:thomas.darimont@gmail.com">Thomas Darimont</a>
  */
 public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper implements OIDCAccessTokenMapper, OIDCIDTokenMapper, UserInfoTokenMapper,
-        OIDCAccessTokenResponseMapper, EnvironmentDependentProviderFactory {
+        OIDCAccessTokenResponseMapper, TokenIntrospectionTokenMapper, EnvironmentDependentProviderFactory {
 
   public static final String PROVIDER_ID = "oidc-script-based-protocol-mapper";
 
@@ -120,7 +120,7 @@ public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper im
 
   @Override
   public boolean isSupported() {
-    return Profile.isFeatureEnabled(Profile.Feature.SCRIPTS) && Profile.isFeatureEnabled(Profile.Feature.UPLOAD_SCRIPTS);
+    return Profile.isFeatureEnabled(Profile.Feature.SCRIPTS);
   }
 
   @Override
@@ -197,15 +197,14 @@ public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper im
   public static ProtocolMapperModel create(String name,
                                            String userAttribute,
                                            String tokenClaimName, String claimType,
-                                           boolean accessToken, boolean idToken, String script, boolean multiValued) {
+                                           boolean accessToken, boolean idToken, boolean introspectionEndpoint, String script, boolean multiValued) {
     ProtocolMapperModel mapper = OIDCAttributeMapperHelper.createClaimMapper(name, userAttribute,
       tokenClaimName, claimType,
-      accessToken, idToken,
-      PROVIDER_ID);
+      accessToken, idToken,  introspectionEndpoint,
+      script);
 
-    mapper.getConfig().put(SCRIPT, script);
     mapper.getConfig().put(ProtocolMapperUtils.MULTIVALUED, String.valueOf(multiValued));
 
-    return mapper;
+    return mapper; 
   }
 }

@@ -18,13 +18,19 @@ package org.keycloak.testsuite.utils.fuse;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.future.ConnectFuture;
 import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.common.NamedFactory;
+import org.apache.sshd.common.signature.Signature;
+import org.apache.sshd.common.signature.BuiltinSignatures;
+
 import org.hamcrest.Matcher;
 import org.jboss.arquillian.core.spi.Validate;
 import org.jboss.logging.Logger;
@@ -34,7 +40,8 @@ import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.isEmptyString;
+import static org.hamcrest.Matchers.emptyString;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
 public class FuseUtils {
@@ -46,6 +53,7 @@ public class FuseUtils {
     private static final String managementPassword = System.getProperty("app.server.management.password", "password");
     private static final String additionalFuseRepos = System.getProperty("additional.fuse.repos");
     private static final String userHome = System.getProperty("user.home");
+    private static final String fuseAdapterVersion = System.getProperty("fuse.adapter.version");
     private static final String projectVersion = System.getProperty("project.version");
     private static final String mvnRepoLocal;
     private static final String mvnLocalSettings;
@@ -103,9 +111,9 @@ public class FuseUtils {
         Result.EMPTY);
 
         assertCommand(managementUser, managementPassword,
-            "feature:repo-add mvn:org.keycloak/keycloak-osgi-features/" + projectVersion + "/xml/features; " +
+            "feature:repo-add mvn:org.keycloak/keycloak-osgi-features/" + fuseAdapterVersion + "/xml/features; " +
             "feature:repo-add mvn:org.keycloak.testsuite/fuse-example-keycloak-features/" + projectVersion + "/xml/features; " +
-            "feature:install pax-http-undertow; " +
+            "feature:install pax-web-http-undertow; " +
             "feature:install keycloak-jaas keycloak-pax-http-undertow; " +
             "feature:install keycloak-fuse-7.0-example",
         Result.OK);
@@ -169,7 +177,7 @@ public class FuseUtils {
         Result.EMPTY);
 
         assertCommand(managementUser, managementPassword,
-            "features:addurl mvn:org.keycloak/keycloak-osgi-features/" + projectVersion + "/xml/features; " +
+            "features:addurl mvn:org.keycloak/keycloak-osgi-features/" + fuseAdapterVersion + "/xml/features; " +
             "features:addurl mvn:org.keycloak.testsuite/fuse-example-keycloak-features/" + projectVersion + "/xml/features; " +
             "features:install keycloak-fuse-6.3-example",
         Result.OK);
@@ -234,6 +242,12 @@ public class FuseUtils {
 
     private static ClientSession openSshChannel(String username, String password) throws IOException {
         SshClient client = SshClient.setUpDefaultClient();
+        List<NamedFactory<Signature>> signatureFactories = client.getSignatureFactories();
+        List<BuiltinSignatures> signatures = new ArrayList<>();
+        signatures.add(BuiltinSignatures.dsa);
+        signatureFactories.addAll(NamedFactory.setUpBuiltinFactories(false, signatures));
+
+        client.setSignatureFactories(signatureFactories);
         client.start();
         ConnectFuture future = client.connect(username, "localhost", 8101);
         future.await();
@@ -255,7 +269,7 @@ public class FuseUtils {
     private static Matcher<String> resultToMatcher(Result result) {
         switch (result) {
             case EMPTY:
-                return isEmptyString();
+                return is(emptyString());
             case OK:
                 return not(anyOf(
                         containsString("Insufficient credentials"),

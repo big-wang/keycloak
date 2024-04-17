@@ -38,9 +38,11 @@ import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
 
-import javax.ws.rs.NotFoundException;
+import jakarta.ws.rs.NotFoundException;
 import java.io.IOException;
 import java.net.URISyntaxException;
+
+import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -90,6 +92,8 @@ public class BruteForceCrossDCTest extends AbstractAdminCrossDCTest {
                 .client(client)
                 .bruteForceProtected(true)
                 .build();
+
+        realmRep.setQuickLoginCheckMilliSeconds(0L); // This is necessary so user is not locked out for too fast consecutive login attempts; when user is locked out failure count stops increasing
 
         adminClient.realms().create(realmRep);
     }
@@ -217,8 +221,8 @@ public class BruteForceCrossDCTest extends AbstractAdminCrossDCTest {
             log.infof("After concurrent update entry1: dc0User1=%d, dc1user1=%d", dc0user1, dc1user1);
 
             // TODO: The number of failures should be ideally exactly 21 in both DCs. Once we improve cross-dc, then improve this test and rather check for "Assert.assertEquals(dc0user1, 21)" and "Assert.assertEquals(dc1user1, 21)"
-            Assert.assertThat(dc0user1, Matchers.greaterThan(11));
-            Assert.assertThat(dc1user1, Matchers.greaterThan(11));
+            assertThat(dc0user1, Matchers.greaterThan(11));
+            assertThat(dc1user1, Matchers.greaterThan(11));
         }, 50, 50);
     }
 

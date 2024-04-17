@@ -20,12 +20,12 @@ package org.keycloak.testsuite.federation.storage;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.stream.Collectors;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import org.junit.Before;
 import org.junit.Test;
 import org.keycloak.common.util.MultivaluedHashMap;
@@ -38,12 +38,9 @@ import org.keycloak.storage.StorageId;
 import org.keycloak.storage.role.RoleStorageProvider;
 import org.keycloak.testsuite.AbstractTestRealmKeycloakTest;
 import org.keycloak.testsuite.admin.ApiUtil;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.auth.page.AuthRealm;
 import org.keycloak.testsuite.federation.HardcodedRoleStorageProviderFactory;
 
-@AuthServerContainerExclude(AuthServer.REMOTE)
 public class RoleStorageTest extends AbstractTestRealmKeycloakTest {
 
     private String providerId;
@@ -102,7 +99,7 @@ public class RoleStorageTest extends AbstractTestRealmKeycloakTest {
             testingClient.server().run(session -> {
                 RealmModel realm = session.realms().getRealmByName(AuthRealm.TEST);
 
-                assertThat(session.roleStorageManager()
+                assertThat(session.roles()
                             .searchForRolesStream(realm, "role", null, null)
                             .map(RoleModel::getName)
                             .collect(Collectors.toList()),
@@ -120,7 +117,7 @@ public class RoleStorageTest extends AbstractTestRealmKeycloakTest {
             testingClient.server().run(session -> {
                 RealmModel realm = session.realms().getRealmByName(AuthRealm.TEST);
                 // search for roles and check hardcoded-role is not present
-                assertThat(session.roleStorageManager()
+                assertThat(session.roles()
                             .searchForRolesStream(realm, "role", null, null)
                             .map(RoleModel::getName)
                             .collect(Collectors.toList()),

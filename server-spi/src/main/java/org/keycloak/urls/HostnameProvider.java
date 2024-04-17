@@ -19,7 +19,7 @@ package org.keycloak.urls;
 import org.keycloak.models.KeycloakContext;
 import org.keycloak.provider.Provider;
 
-import javax.ws.rs.core.UriInfo;
+import jakarta.ws.rs.core.UriInfo;
 
 /**
  * The Hostname provider is used by Keycloak to decide URLs for frontend and backend requests. A provider can either
@@ -34,7 +34,7 @@ public interface HostnameProvider extends Provider {
      * Returns the URL scheme. If not implemented will delegate to {@link #getScheme(UriInfo)}.
      *
      * @param originalUriInfo the original URI
-     * @param uype type of the request
+     * @param type type of the request
      * @return the schema
      */
     default String getScheme(UriInfo originalUriInfo, UrlType type) {

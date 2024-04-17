@@ -21,7 +21,7 @@
     <parent>
         <groupId>org.keycloak.testsuite</groupId>
         <artifactId>integration-arquillian-servers-app-server</artifactId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -120,18 +120,12 @@
                                         </artifactItem>
                                         <artifactItem>
                                             <groupId>org.jboss.resteasy</groupId>
-                                            <artifactId>resteasy-jaxrs</artifactId>
-                                            <version>${tomcat.resteasy.version}</version>
-                                        </artifactItem>
-                                        <artifactItem>
-                                            <groupId>org.jboss.resteasy</groupId>
-                                            <artifactId>resteasy-servlet-initializer</artifactId>
+                                            <artifactId>resteasy-core</artifactId>
                                             <version>${tomcat.resteasy.version}</version>
                                         </artifactItem>
                                         <artifactItem>
                                             <groupId>org.apache.httpcomponents</groupId>
                                             <artifactId>httpcore</artifactId>
-                                            <version>${apache.httpcomponents.httpcore.version}</version>
                                         </artifactItem>
                                         <artifactItem>
                                             <groupId>org.reactivestreams</groupId>
@@ -141,12 +135,10 @@
                                         <artifactItem>
                                             <groupId>com.fasterxml.jackson.core</groupId>
                                             <artifactId>jackson-databind</artifactId>
-                                            <version>${jackson.version}</version>
                                         </artifactItem>
                                         <artifactItem>
                                             <groupId>org.jboss.logging</groupId>
                                             <artifactId>jboss-logging</artifactId>
-                                            <version>${jboss.logging.version}</version>
                                         </artifactItem>
                                         <artifactItem>
                                             <groupId>javax.json.bind</groupId>
@@ -295,14 +287,7 @@
                 </plugins>
             </build>
         </profile>
-        
-        <profile>
-            <id>app-server-tomcat7</id>
-            <modules>
-                <module>tomcat7</module>
-                <module>common</module>
-            </modules>
-        </profile>
+
         <profile>
             <id>app-server-tomcat8</id>
             <modules>

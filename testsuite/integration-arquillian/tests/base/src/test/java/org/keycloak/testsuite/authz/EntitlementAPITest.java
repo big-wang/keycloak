@@ -21,12 +21,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.keycloak.testsuite.AssertEvents.isUUID;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,7 +35,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.http.client.HttpClient;
 import org.apache.http.impl.client.HttpClients;
@@ -92,8 +93,6 @@ import org.keycloak.representations.idm.authorization.ScopePermissionRepresentat
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
 import org.keycloak.representations.idm.authorization.UserPolicyRepresentation;
 import org.keycloak.testsuite.AssertEvents;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.client.resources.TestApplicationResourceUrls;
 import org.keycloak.testsuite.util.ClientBuilder;
@@ -107,7 +106,6 @@ import org.keycloak.util.JsonSerialization;
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
-@AuthServerContainerExclude(AuthServer.REMOTE)
 public class EntitlementAPITest extends AbstractAuthzTest {
 
     private static final String RESOURCE_SERVER_TEST = "resource-server-test";
@@ -424,7 +422,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName("Only Owner Policy");
-        policy.setCode("if ($evaluation.getContext().getIdentity().getId() == $evaluation.getPermission().getResource().getOwner()) {$evaluation.grant();}");
+        policy.setType("script-scripts/only-owner-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -563,7 +561,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -589,6 +587,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         request.addPermission("Sensortest", "sensors:view");
 
         getTestContext().getTestingClient().testing().clearEventQueue();
+        AccessToken at = toAccessToken(accessToken);
 
         try {
             authzClient.authorization(accessToken).authorize(request);
@@ -598,11 +597,12 @@ public class EntitlementAPITest extends AbstractAuthzTest {
             assertTrue(HttpResponseException.class.cast(expected.getCause()).toString().contains("invalid_resource"));
         }
 
+
         events.expect(EventType.PERMISSION_TOKEN_ERROR).realm(getRealm().toRepresentation().getId()).client(RESOURCE_SERVER_TEST)
                 .session((String) null)
                 .error("invalid_request")
                 .detail("reason", "Resource with id [Sensortest] does not exist.")
-                .user(isUUID())
+                .user(at.getSubject())
                 .assertEvent();
     }
 
@@ -614,7 +614,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -670,7 +670,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -769,7 +769,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -809,7 +809,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -891,7 +891,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -981,14 +981,14 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation grantPolicy = new JSPolicyRepresentation();
 
         grantPolicy.setName(KeycloakModelUtils.generateId());
-        grantPolicy.setCode("$evaluation.grant();");
+        grantPolicy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(grantPolicy).close();
 
         JSPolicyRepresentation denyPolicy = new JSPolicyRepresentation();
 
         denyPolicy.setName(KeycloakModelUtils.generateId());
-        denyPolicy.setCode("$evaluation.deny();");
+        denyPolicy.setType("script-scripts/always-deny-policy.js");
 
         authorization.policies().js().create(denyPolicy).close();
 
@@ -1117,7 +1117,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -1730,16 +1730,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation onlyOwnerPolicy = new JSPolicyRepresentation();
 
         onlyOwnerPolicy.setName(KeycloakModelUtils.generateId());
-        onlyOwnerPolicy.setCode("var context = $evaluation.getContext();\n" +
-                "var identity = context.getIdentity();\n" +
-                "var permission = $evaluation.getPermission();\n" +
-                "var resource = permission.getResource();\n" +
-                "\n" +
-                "if (resource) {\n" +
-                "    if (resource.owner == identity.id) {\n" +
-                "        $evaluation.grant();\n" +
-                "    }\n" +
-                "}");
+        onlyOwnerPolicy.setType("script-scripts/only-owner-policy.js");
 
         return onlyOwnerPolicy;
     }
@@ -1751,19 +1742,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation onlyPublicResourcesPolicy = new JSPolicyRepresentation();
 
         onlyPublicResourcesPolicy.setName(KeycloakModelUtils.generateId());
-        onlyPublicResourcesPolicy.setCode("var createPermission = $evaluation.getPermission();\n" +
-                "var resource = createPermission.getResource();\n" +
-                "\n" +
-                "if (resource) {\n" +
-                "    var attributes = resource.getAttributes();\n" +
-                "    var visibility = attributes.get('visibility');\n" +
-                "    \n" +
-                "    if (visibility && \"private\".equals(visibility.get(0))) {\n" +
-                "        $evaluation.deny();\n" +
-                "      } else {\n" +
-                "        $evaluation.grant();\n" +
-                "    }\n" +
-                "}");
+        onlyPublicResourcesPolicy.setType("script-scripts/resource-visibility-attribute-policy.js");
 
         authorization.policies().js().create(onlyPublicResourcesPolicy).close();
 
@@ -1929,7 +1908,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -1997,7 +1976,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2044,6 +2023,58 @@ public class EntitlementAPITest extends AbstractAuthzTest {
     }
 
     @Test
+    public void testRefreshTokenFromClientOtherThanAudience() throws Exception {
+        oauth.realm("authz-test");
+        oauth.clientId(PUBLIC_TEST_CLIENT);
+        oauth.doLogin("marta", "password");
+        String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+        OAuthClient.AccessTokenResponse accessTokenResponse = oauth.doAccessTokenRequest(code, null);
+        assertNotNull(accessTokenResponse.getAccessToken());
+        assertNotNull(accessTokenResponse.getRefreshToken());
+
+        AuthorizationRequest request = new AuthorizationRequest();
+        request.setAudience(RESOURCE_SERVER_TEST);
+        AuthorizationResponse authorizationResponse = getAuthzClient(PUBLIC_TEST_CLIENT_CONFIG).authorization(accessTokenResponse.getAccessToken()).authorize(request);
+        AccessToken token = toAccessToken(authorizationResponse.getToken());
+        assertEquals(PUBLIC_TEST_CLIENT, token.getIssuedFor());
+        assertEquals(RESOURCE_SERVER_TEST, token.getAudience()[0]);
+        assertFalse(token.getAuthorization().getPermissions().isEmpty());
+
+        accessTokenResponse = oauth.doRefreshTokenRequest(authorizationResponse.getRefreshToken(), null);
+        assertNotNull(accessTokenResponse.getAccessToken());
+        assertNotNull(accessTokenResponse.getRefreshToken());
+        token = toAccessToken(authorizationResponse.getToken());
+        assertEquals(PUBLIC_TEST_CLIENT, token.getIssuedFor());
+        assertFalse(token.getAuthorization().getPermissions().isEmpty());
+    }
+
+    @Test
+    public void testTokenExpirationRenewalWhenIssuingTokens() {
+        oauth.realm("authz-test");
+        oauth.clientId(PUBLIC_TEST_CLIENT);
+        oauth.doLogin("marta", "password");
+        String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+        OAuthClient.AccessTokenResponse accessTokenResponse = oauth.doAccessTokenRequest(code, null);
+        assertNotNull(accessTokenResponse.getAccessToken());
+        assertNotNull(accessTokenResponse.getRefreshToken());
+
+        try {
+            for (int i = 0; i < 3; i++) {
+                AuthorizationRequest request = new AuthorizationRequest();
+                request.setAudience(RESOURCE_SERVER_TEST);
+                AuthorizationResponse authorizationResponse = getAuthzClient(PUBLIC_TEST_CLIENT_CONFIG).authorization(accessTokenResponse.getAccessToken()).authorize(request);
+                AccessToken refreshToken = toAccessToken(authorizationResponse.getRefreshToken());
+                AccessToken accessTokenToken = toAccessToken(authorizationResponse.getToken());
+                assertEquals(refreshToken.getExp() - refreshToken.getIat(), 1800);
+                assertEquals(accessTokenToken.getExp() - accessTokenToken.getIat(), 300);
+                setTimeOffset(i);
+            }
+        } finally {
+            resetTimeOffset();
+        }
+    }
+
+    @Test
     public void testUsingExpiredToken() throws Exception {
         ClientResource client = getClient(getRealm(), RESOURCE_SERVER_TEST);
         AuthorizationResource authorization = client.authorization();
@@ -2051,7 +2082,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2107,7 +2138,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2155,7 +2186,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2220,7 +2251,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation grantPolicy = new JSPolicyRepresentation();
 
         grantPolicy.setName("Grant Policy");
-        grantPolicy.setCode("$evaluation.grant();");
+        grantPolicy.setType("script-scripts/default-policy.js");
 
         rsB.authorization().policies().js().create(grantPolicy);
 
@@ -2263,7 +2294,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2318,7 +2349,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName(KeycloakModelUtils.generateId());
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 
@@ -2384,6 +2415,65 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         assertTrue(result.getPermissions().stream().anyMatch(p ->
                 p.getResourceId() != null && p.getResourceId().equals(resourceId) && p
                         .getScopes().contains("entity:read")));
+    }
+
+    @Test
+    public void testSameResultRegardlessOPermissionParameterValue() throws Exception {
+        ClientResource client = getClient(getRealm(), RESOURCE_SERVER_TEST);
+        AuthorizationResource authorization = client.authorization();
+        ResourceRepresentation resource = new ResourceRepresentation();
+
+        resource.setName(KeycloakModelUtils.generateId());
+        resource.addScope("scope1", "scope2");
+        resource.setOwnerManagedAccess(true);
+
+        try (Response response = authorization.resources().create(resource)) {
+            resource = response.readEntity(ResourceRepresentation.class);
+        }
+
+        UserPolicyRepresentation policy = new UserPolicyRepresentation();
+
+        policy.setName(KeycloakModelUtils.generateId());
+        policy.addUser("marta");
+
+        authorization.policies().user().create(policy).close();
+
+        ScopePermissionRepresentation representation = new ScopePermissionRepresentation();
+
+        representation.setName(KeycloakModelUtils.generateId());
+        representation.addScope("scope1");
+        representation.addPolicy(policy.getName());
+
+        authorization.permissions().scope().create(representation).close();
+
+        AuthzClient authzClient = getAuthzClient(AUTHZ_CLIENT_CONFIG);
+        PermissionTicketRepresentation ticket = new PermissionTicketRepresentation();
+
+        ticket.setResource(resource.getId());
+        ticket.setRequesterName("marta");
+        ticket.setGranted(true);
+        ticket.setScopeName("scope1");
+
+        authzClient.protection().permission().create(ticket);
+
+        AuthorizationRequest request = new AuthorizationRequest();
+        request.addPermission(resource.getId());
+        AuthorizationResponse response = authzClient.authorization("marta", "password").authorize(request);
+        AccessToken rpt = toAccessToken(response.getToken());
+        ResourceRepresentation finalResource = resource;
+        List<Permission> permissions = rpt.getAuthorization().getPermissions().stream().filter(permission -> permission.getResourceId().equals(finalResource.getId())).collect(Collectors.toList());
+        assertEquals(1, permissions.size());
+        assertEquals(1, permissions.get(0).getScopes().size());
+        assertEquals("scope1", permissions.get(0).getScopes().iterator().next());
+
+        request = new AuthorizationRequest();
+        request.addPermission(resource.getName());
+        response = authzClient.authorization("marta", "password").authorize(request);
+        rpt = toAccessToken(response.getToken());
+        permissions = rpt.getAuthorization().getPermissions().stream().filter(permission -> permission.getResourceId().equals(finalResource.getId())).collect(Collectors.toList());
+        assertEquals(1, permissions.size());
+        assertEquals(1, permissions.get(0).getScopes().size());
+        assertEquals("scope1", permissions.get(0).getScopes().iterator().next());
     }
 
     private void testRptRequestWithResourceName(String configFile) {
@@ -2493,7 +2583,7 @@ public class EntitlementAPITest extends AbstractAuthzTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName("Default Policy");
-        policy.setCode("$evaluation.grant();");
+        policy.setType("script-scripts/default-policy.js");
 
         authorization.policies().js().create(policy).close();
 

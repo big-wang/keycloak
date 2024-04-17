@@ -26,8 +26,8 @@ import java.security.interfaces.ECPublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.List;
 
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Response;
 
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Rule;
@@ -217,7 +217,7 @@ public class GeneratedEcdsaKeyProviderTest extends AbstractKeycloakTest {
     protected ComponentRepresentation createRep(String name, String providerId) {
         ComponentRepresentation rep = new ComponentRepresentation();
         rep.setName(name);
-        rep.setParentId(TEST_REALM_NAME);
+        rep.setParentId(adminClient.realm(TEST_REALM_NAME).toRepresentation().getId());
         rep.setProviderId(providerId);
         rep.setProviderType(KeyProvider.class.getName());
         rep.setConfig(new MultivaluedHashMap<>());

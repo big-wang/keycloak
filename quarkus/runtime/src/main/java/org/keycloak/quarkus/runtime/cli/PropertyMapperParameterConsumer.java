@@ -19,7 +19,6 @@ package org.keycloak.quarkus.runtime.cli;
 
 import static org.keycloak.quarkus.runtime.cli.Picocli.ARG_PREFIX;
 
-import java.util.Iterator;
 import java.util.Stack;
 
 import picocli.CommandLine;
@@ -50,50 +49,30 @@ public final class PropertyMapperParameterConsumer implements CommandLine.IParam
         CommandLine commandLine = commandSpec.commandLine();
 
         if (args.isEmpty() || !isOptionValue(args.peek())) {
-            throw new ParameterException(
-                    commandLine, "Missing required value for option '" + name + "' (" + argSpec.paramLabel() + ")." + getExpectedValuesMessage(argSpec, option));
+            throw new ParameterException(commandLine,
+                    "Missing required value. " + getExpectedMessage(argSpec, option, name));
         }
 
-        // consumes the value
-        String value = args.pop();
+        // consumes the value, actual value validation will be performed later
+        args.pop();
 
         if (!args.isEmpty() && isOptionValue(args.peek())) {
-            throw new ParameterException(
-                    commandLine, "Option '" + name + "' expects a single value (" + argSpec.paramLabel() + ")" + getExpectedValuesMessage(argSpec, option));
+            throw new ParameterException(commandLine, getExpectedMessage(argSpec, option, name));
         }
+    }
 
-        if (isExpectedValue(option, value)) {
-            return;
-        }
-
-        throw new ParameterException(
-                commandLine, "Invalid value for option '" + name + "': " + value + "." + getExpectedValuesMessage(argSpec, option));
+    private String getExpectedMessage(ArgSpec argSpec, OptionSpec option, String name) {
+        return String.format("Option '%s' (%s) expects %s.%s", name, argSpec.paramLabel(),
+                option.typeInfo().isMultiValue() ? "one or more comma separated values without whitespace": "a single value",
+                getExpectedValuesMessage(argSpec.completionCandidates(), option.completionCandidates()));
     }
 
     private boolean isOptionValue(String arg) {
         return !(arg.startsWith(ARG_PREFIX) || arg.startsWith(Picocli.ARG_SHORT_PREFIX));
     }
 
-    private String getExpectedValuesMessage(ArgSpec argSpec, OptionSpec option) {
-        return option.completionCandidates().iterator().hasNext() ? " Expected values are: " + String.join(", ", argSpec.completionCandidates()) : "";
+    public static String getExpectedValuesMessage(Iterable<String> specCandidates, Iterable<String> optionCandidates) {
+        return optionCandidates.iterator().hasNext() ? " Expected values are: " + String.join(", ", specCandidates) : "";
     }
 
-    private boolean isExpectedValue(OptionSpec option, String value) {
-        Iterator<String> expectedValues = option.completionCandidates().iterator();
-
-        if (!expectedValues.hasNext()) {
-            // accept any
-            return true;
-        }
-
-        while (expectedValues.hasNext()) {
-            String expectedValue = expectedValues.next();
-
-            if (expectedValue.equals(value)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 }

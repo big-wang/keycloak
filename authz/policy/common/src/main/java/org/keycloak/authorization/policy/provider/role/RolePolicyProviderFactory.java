@@ -1,19 +1,18 @@
 /*
- *  Copyright 2016 Red Hat, Inc. and/or its affiliates
- *  and other contributors as indicated by the @author tags.
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
+ * and other contributors as indicated by the @author tags.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package org.keycloak.authorization.policy.provider.role;
@@ -21,29 +20,24 @@ package org.keycloak.authorization.policy.provider.role;
 import org.keycloak.Config;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.model.Policy;
-import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.authorization.policy.provider.PolicyProvider;
 import org.keycloak.authorization.policy.provider.PolicyProviderFactory;
-import org.keycloak.authorization.store.PolicyStore;
-import org.keycloak.authorization.store.ResourceServerStore;
-import org.keycloak.authorization.store.StoreFactory;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleContainerModel;
-import org.keycloak.models.RoleContainerModel.RoleRemovedEvent;
 import org.keycloak.models.RoleModel;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
 import org.keycloak.representations.idm.authorization.RolePolicyRepresentation;
+import org.keycloak.representations.idm.authorization.RolePolicyRepresentation.RoleDefinition;
 import org.keycloak.util.JsonSerialization;
+import org.keycloak.utils.StringUtil;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -77,11 +71,14 @@ public class RolePolicyProviderFactory implements PolicyProviderFactory<RolePoli
     @Override
     public RolePolicyRepresentation toRepresentation(Policy policy, AuthorizationProvider authorization) {
         RolePolicyRepresentation representation = new RolePolicyRepresentation();
+        String roles = policy.getConfig().get("roles");
 
-        try {
-            representation.setRoles(new HashSet<>(Arrays.asList(JsonSerialization.readValue(policy.getConfig().get("roles"), RolePolicyRepresentation.RoleDefinition[].class))));
-        } catch (IOException cause) {
-            throw new RuntimeException("Failed to deserialize roles", cause);
+        representation.setRoles(getRoles(roles, authorization.getRealm()));
+
+        String fetchRoles = policy.getConfig().get("fetchRoles");
+
+        if (StringUtil.isNotBlank(fetchRoles)) {
+            representation.setFetchRoles(Boolean.parseBoolean(fetchRoles));
         }
 
         return representation;
@@ -104,10 +101,11 @@ public class RolePolicyProviderFactory implements PolicyProviderFactory<RolePoli
 
     @Override
     public void onImport(Policy policy, PolicyRepresentation representation, AuthorizationProvider authorization) {
-        try {
-            updateRoles(policy, authorization, new HashSet<>(Arrays.asList(JsonSerialization.readValue(representation.getConfig().get("roles"), RolePolicyRepresentation.RoleDefinition[].class))));
-        } catch (IOException cause) {
-            throw new RuntimeException("Failed to deserialize roles during import", cause);
+        updateRoles(policy, authorization, getRoles(representation.getConfig().get("roles"), authorization.getRealm()));
+        String fetchRoles = representation.getConfig().get("fetchRoles");
+
+        if (StringUtil.isNotBlank(fetchRoles)) {
+            policy.putConfig("fetchRoles", fetchRoles);
         }
     }
 
@@ -132,49 +130,29 @@ public class RolePolicyProviderFactory implements PolicyProviderFactory<RolePoli
             throw new RuntimeException("Failed to export role policy [" + policy.getName() + "]", cause);
         }
 
+        String fetchRoles = policy.getConfig().get("fetchRoles");
+
+        if (StringUtil.isNotBlank(fetchRoles)) {
+            config.put("fetchRoles", fetchRoles);
+        }
+
         representation.setConfig(config);
     }
 
     private void updateRoles(Policy policy, RolePolicyRepresentation representation, AuthorizationProvider authorization) {
+        policy.putConfig("fetchRoles", String.valueOf(representation.isFetchRoles()));
         updateRoles(policy, authorization, representation.getRoles());
     }
 
     private void updateRoles(Policy policy, AuthorizationProvider authorization, Set<RolePolicyRepresentation.RoleDefinition> roles) {
-        KeycloakSession session = authorization.getKeycloakSession();
-        RealmModel realm = authorization.getRealm();
         Set<RolePolicyRepresentation.RoleDefinition> updatedRoles = new HashSet<>();
 
         if (roles != null) {
+            RealmModel realm = authorization.getRealm();
             for (RolePolicyRepresentation.RoleDefinition definition : roles) {
-                String roleName = definition.getId();
-                String clientId = null;
-                int clientIdSeparator = roleName.indexOf("/");
-
-                if (clientIdSeparator != -1) {
-                    clientId = roleName.substring(0, clientIdSeparator);
-                    roleName = roleName.substring(clientIdSeparator + 1);
-                }
-
-                RoleModel role;
-
-                if (clientId == null) {
-                    role = realm.getRole(roleName);
-
-                    if (role == null) {
-                        role = realm.getRoleById(roleName);
-                    }
-                } else {
-                    ClientModel client = realm.getClientByClientId(clientId);
-
-                    if (client == null) {
-                        throw new RuntimeException("Client with id [" + clientId + "] not found.");
-                    }
-
-                    role = client.getRole(roleName);
-                }
-
+                RoleModel role = getRole(definition, realm);
                 if (role == null) {
-                    throw new RuntimeException("Error while updating policy [" + policy.getName()  + "]. Role [" + roleName + "] could not be found.");
+                    continue;
                 }
 
                 definition.setId(role.getId());
@@ -197,58 +175,7 @@ public class RolePolicyProviderFactory implements PolicyProviderFactory<RolePoli
 
     @Override
     public void postInit(KeycloakSessionFactory factory) {
-        factory.register(event -> {
-            if (event instanceof RoleRemovedEvent) {
-                KeycloakSession keycloakSession = ((RoleRemovedEvent) event).getKeycloakSession();
-                AuthorizationProvider provider = keycloakSession.getProvider(AuthorizationProvider.class);
-                StoreFactory storeFactory = provider.getStoreFactory();
-                PolicyStore policyStore = storeFactory.getPolicyStore();
-                RoleModel removedRole = ((RoleRemovedEvent) event).getRole();
-                RoleContainerModel container = removedRole.getContainer();
-                ResourceServerStore resourceServerStore = storeFactory.getResourceServerStore();
 
-                if (container instanceof RealmModel) {
-                    RealmModel realm = (RealmModel) container;
-                    realm.getClientsStream()
-                            .forEach(clientModel -> updateResourceServer(clientModel, removedRole, resourceServerStore, policyStore));
-                } else {
-                    ClientModel clientModel = (ClientModel) container;
-                    updateResourceServer(clientModel, removedRole, resourceServerStore, policyStore);
-                }
-            }
-        });
-    }
-
-    private void updateResourceServer(ClientModel clientModel, RoleModel removedRole, ResourceServerStore resourceServerStore, PolicyStore policyStore) {
-        ResourceServer resourceServer = resourceServerStore.findById(clientModel.getId());
-
-        if (resourceServer != null) {
-            policyStore.findByType(getId(), resourceServer.getId()).forEach(policy -> {
-                List<Map> roles = new ArrayList<>();
-
-                for (Map<String,Object> role : getRoles(policy)) {
-                    if (!role.get("id").equals(removedRole.getId())) {
-                        Map updated = new HashMap();
-                        updated.put("id", role.get("id"));
-                        Object required = role.get("required");
-                        if (required != null) {
-                            updated.put("required", required);
-                        }
-                        roles.add(updated);
-                    }
-                }
-
-                try {
-                    if (roles.isEmpty()) {
-                        policyStore.delete(policy.getId());
-                    } else {
-                        policy.putConfig("roles", JsonSerialization.writeValueAsString(roles));
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException("Error while synchronizing roles with policy [" + policy.getName() + "].", e);
-                }
-            });
-        }
     }
 
     @Override
@@ -261,17 +188,48 @@ public class RolePolicyProviderFactory implements PolicyProviderFactory<RolePoli
         return "role";
     }
 
-    private Map<String, Object>[] getRoles(Policy policy) {
-        String roles = policy.getConfig().get("roles");
-
-        if (roles != null) {
+    private Set<RoleDefinition> getRoles(String rawRoles, RealmModel realm) {
+        if (rawRoles != null) {
             try {
-                return JsonSerialization.readValue(roles.getBytes(), Map[].class);
+                Set<RoleDefinition> roles = new HashSet<>(Arrays.asList(JsonSerialization.readValue(rawRoles, RoleDefinition[].class)));
+                roles.removeIf(definition -> getRole(definition, realm) == null);
+                return roles;
             } catch (IOException e) {
-                throw new RuntimeException("Could not parse roles [" + roles + "] from policy config [" + policy.getName() + ".", e);
+                throw new RuntimeException("Could not parse roles from config: [" + rawRoles + "]", e);
             }
         }
 
-        return new Map[] {};
+        return Collections.emptySet();
+    }
+
+    private RoleModel getRole(RolePolicyRepresentation.RoleDefinition definition, RealmModel realm) {
+        String roleName = definition.getId();
+        String clientId = null;
+        int clientIdSeparator = roleName.indexOf("/");
+
+        if (clientIdSeparator != -1) {
+            clientId = roleName.substring(0, clientIdSeparator);
+            roleName = roleName.substring(clientIdSeparator + 1);
+        }
+
+        RoleModel role;
+
+        if (clientId == null) {
+            role = realm.getRole(roleName);
+
+            if (role == null) {
+                role = realm.getRoleById(roleName);
+            }
+        } else {
+            ClientModel client = realm.getClientByClientId(clientId);
+
+            if (client == null) {
+                throw new RuntimeException("Client with id [" + clientId + "] not found.");
+            }
+
+            role = client.getRole(roleName);
+        }
+
+        return role;
     }
 }

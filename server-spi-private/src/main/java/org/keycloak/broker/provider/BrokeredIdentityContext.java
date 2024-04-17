@@ -18,6 +18,7 @@ package org.keycloak.broker.provider;
 
 import org.keycloak.models.Constants;
 import org.keycloak.models.IdentityProviderModel;
+import org.keycloak.models.UserSessionModel;
 import org.keycloak.sessions.AuthenticationSessionModel;
 
 import java.util.ArrayList;
@@ -161,6 +162,28 @@ public class BrokeredIdentityContext {
         this.contextData = contextData;
     }
 
+    private Map<String, String> getSessionNotes() {
+        HashMap<String, String> sessionNotes = (HashMap<String, String>) this.contextData.get(Constants.MAPPER_SESSION_NOTES);
+        if (sessionNotes == null) {
+            sessionNotes = new HashMap<>();
+            this.contextData.put(Constants.MAPPER_SESSION_NOTES, sessionNotes);
+        }
+        return sessionNotes;
+    }
+
+    public void setSessionNote(String key, String value) {
+        if(authenticationSession != null) {
+            authenticationSession.setUserSessionNote(key, value);
+        }
+        else {
+            getSessionNotes().put(key, value);
+        }
+    }
+
+    public void addSessionNotesToUserSession(UserSessionModel userSession) {
+        getSessionNotes().forEach((k, v) -> userSession.setNote(k, v));
+    }
+
     // Set the attribute, which will be available on "Update profile" page and in authenticators
     public void setUserAttribute(String attributeName, String attributeValue) {
         List<String> list = new ArrayList<>();
@@ -184,6 +207,25 @@ public class BrokeredIdentityContext {
         } else {
             return userAttribute.get(0);
         }
+    }
+
+    public Map<String, List<String>> getAttributes() {
+        Map<String, List<String>> result = new HashMap<>();
+
+        for (Map.Entry<String, Object> entry : this.contextData.entrySet()) {
+            if (entry.getKey().startsWith(Constants.USER_ATTRIBUTES_PREFIX)) {
+                String attrName = entry.getKey().substring(Constants.USER_ATTRIBUTES_PREFIX.length());
+                List<String> asList = (List<String>) getContextData().get(Constants.USER_ATTRIBUTES_PREFIX + attrName);
+
+                if (asList.isEmpty()) {
+                    continue;
+                }
+
+                result.put(attrName, asList);
+            }
+        }
+
+        return result;
     }
 
     public String getFirstName() {

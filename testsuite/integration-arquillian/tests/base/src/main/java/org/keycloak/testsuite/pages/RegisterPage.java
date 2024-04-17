@@ -17,8 +17,12 @@
 
 package org.keycloak.testsuite.pages;
 
+import java.util.Map;
+import java.util.Map.Entry;
+
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Assert;
+import org.keycloak.models.Constants;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.testsuite.auth.page.AccountFields;
 import org.keycloak.testsuite.auth.page.PasswordFields;
@@ -56,9 +60,12 @@ public class RegisterPage extends AbstractPage {
 
     @FindBy(id = "password-confirm")
     private WebElement passwordConfirmInput;
-    
+
     @FindBy(id = "department")
     private WebElement departmentInput;
+
+    @FindBy(id = "termsAccepted")
+    private WebElement termsAcceptedInput;
 
     @FindBy(css = "input[type=\"submit\"]")
     private WebElement submitButton;
@@ -73,10 +80,18 @@ public class RegisterPage extends AbstractPage {
     private WebElement backToLoginLink;
 
     public void register(String firstName, String lastName, String email, String username, String password, String passwordConfirm) {
-        register(firstName, lastName, email, username, password, passwordConfirm, null);
+        register(firstName, lastName, email, username, password, passwordConfirm, null, null, null);
     }
 
     public void register(String firstName, String lastName, String email, String username, String password, String passwordConfirm, String department) {
+        register(firstName, lastName, email, username, password, passwordConfirm, department, null, null);
+    }
+
+    public void register(String firstName, String lastName, String email, String username, String password, String passwordConfirm, Map<String, String> attributes) {
+        register(firstName, lastName, email, username, password, passwordConfirm, null, null, attributes);
+    }
+
+    public void register(String firstName, String lastName, String email, String username, String password, String passwordConfirm, String department, Boolean termsAccepted, Map<String, String> attributes) {
         firstNameInput.clear();
         if (firstName != null) {
             firstNameInput.sendKeys(firstName);
@@ -111,6 +126,16 @@ public class RegisterPage extends AbstractPage {
             departmentInput.clear();
             if (department != null) {
                 departmentInput.sendKeys(department);
+            }
+        }
+
+        if (termsAccepted != null && termsAccepted) {
+            termsAcceptedInput.click();
+        }
+
+        if (attributes != null) {
+            for (Entry<String, String> attribute : attributes.entrySet()) {
+                driver.findElement(By.id(Constants.USER_ATTRIBUTES_PREFIX + attribute.getKey())).sendKeys(attribute.getValue());
             }
         }
 
@@ -173,7 +198,7 @@ public class RegisterPage extends AbstractPage {
         }
         return null;
     }
-    
+
     public String getLabelForField(String fieldId) {
         return driver.findElement(By.cssSelector("label[for="+fieldId+"]")).getText();
     }
@@ -218,7 +243,7 @@ public class RegisterPage extends AbstractPage {
         }
     }
 
-    
+
     public boolean isCurrent() {
         return PageUtils.getPageTitle(driver).equals("Register");
     }

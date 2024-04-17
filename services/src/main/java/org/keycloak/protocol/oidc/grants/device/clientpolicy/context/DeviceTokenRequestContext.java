@@ -17,7 +17,7 @@
 
 package org.keycloak.protocol.oidc.grants.device.clientpolicy.context;
 
-import javax.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.MultivaluedMap;
 
 import org.keycloak.models.OAuth2DeviceCodeModel;
 import org.keycloak.services.clientpolicy.ClientPolicyContext;
@@ -39,7 +39,7 @@ public class DeviceTokenRequestContext implements ClientPolicyContext {
 
     @Override
     public ClientPolicyEvent getEvent() {
-        return ClientPolicyEvent.DEVICE_AUTHORIZATION_REQUEST;
+        return ClientPolicyEvent.DEVICE_TOKEN_REQUEST;
     }
 
     public OAuth2DeviceCodeModel getDeviceCodeModel() {

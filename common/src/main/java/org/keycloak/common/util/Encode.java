@@ -169,6 +169,15 @@ public class Encode
    }
 
    /**
+    * Keep encoded values "%..." but not the template parameters.
+    * @param value
+    * @return
+    */
+   public static String encodeQueryStringNotTemplateParameters(String value) {
+      return encodeNonCodes(encodeFromArray(value, queryStringEncoding, false));
+   }
+
+   /**
     * Keep encoded values "%...", matrix parameters, template parameters, and '/' characters intact.
     */
    public static String encodePath(String value)
@@ -190,6 +199,16 @@ public class Encode
    public static String encodeFragment(String value)
    {
       return encodeValue(value, queryStringEncoding);
+   }
+
+   /**
+    * Keep encoded values "%..." but not the template parameters.
+    * @param value
+    * @return
+    */
+   public static String encodeFragmentNotTemplateParameters(String value)
+   {
+      return encodeNonCodes(encodeFromArray(value, queryStringEncoding, false));
    }
 
    /**
@@ -568,6 +587,27 @@ public class Encode
       {
          throw new RuntimeException(e);
       }
+   }
+
+
+   /**
+    * @param string
+    * @return URL encoded input
+    */
+   public static String urlEncode(String string) {
+      try {
+         return URLEncoder.encode(string, UTF_8);
+      } catch (UnsupportedEncodingException e) {
+         throw new RuntimeException(e);
+      }
+   }
+
+   /**
+    * @param string
+    * @return URL decoded input
+    */
+   public static String urlDecode(String string) {
+      return decode(string);
    }
 
 }

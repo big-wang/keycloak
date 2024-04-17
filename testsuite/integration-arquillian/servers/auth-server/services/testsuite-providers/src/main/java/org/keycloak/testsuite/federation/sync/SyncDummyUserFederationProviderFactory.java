@@ -26,6 +26,7 @@ import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.provider.ProviderConfigurationBuilder;
+import org.keycloak.storage.UserStoragePrivateUtil;
 import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.user.SynchronizationResult;
 import org.keycloak.testsuite.federation.DummyUserFederationProviderFactory;
@@ -41,12 +42,14 @@ import java.util.concurrent.TimeUnit;
 public class SyncDummyUserFederationProviderFactory extends DummyUserFederationProviderFactory {
 
     // Used during SyncFederationTest
-    public static volatile CountDownLatch latch1 = new CountDownLatch(1);
-    public static volatile CountDownLatch latch2 = new CountDownLatch(1);
+    public static volatile CountDownLatch latchStarted = new CountDownLatch(1);
+    public static volatile CountDownLatch latchWait = new CountDownLatch(1);
+    public static volatile CountDownLatch latchFinished = new CountDownLatch(1);
 
     public static void restartLatches() {
-        latch1 = new CountDownLatch(1);
-        latch2 = new CountDownLatch(1);
+        latchStarted = new CountDownLatch(1);
+        latchWait = new CountDownLatch(1);
+        latchFinished = new CountDownLatch(1);
     }
 
 
@@ -76,6 +79,12 @@ public class SyncDummyUserFederationProviderFactory extends DummyUserFederationP
 
     @Override
     public SynchronizationResult syncSince(Date lastSync, KeycloakSessionFactory sessionFactory, String realmId, UserStorageProviderModel model) {
+        if (latchStarted.getCount() <= 0) {
+            logger.info("Already executed, returning");
+            return SynchronizationResult.empty();
+        }
+        // we are starting => allow the test to continue
+        latchStarted.countDown();
 
         KeycloakModelUtils.runJobInTransaction(sessionFactory, new KeycloakSessionTask() {
 
@@ -90,20 +99,21 @@ public class SyncDummyUserFederationProviderFactory extends DummyUserFederationP
                 // KEYCLOAK-2412 : Just remove and add some users for testing purposes
                 for (int i = 0; i < 10; i++) {
                     String username = "dummyuser-" + i;
-                    UserModel user = session.userLocalStorage().getUserByUsername(realm, username);
+                    UserModel user = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(realm, username);
 
                     if (user != null) {
-                        session.userLocalStorage().removeUser(realm, user);
+                        UserStoragePrivateUtil.userLocalStorage(session).removeUser(realm, user);
                     }
 
-                    user = session.userLocalStorage().addUser(realm, username);
+                    user = UserStoragePrivateUtil.userLocalStorage(session).addUser(realm, username);
                 }
 
                 logger.infof("Finished sync of changed users. Waiting now for %d seconds", waitTime);
 
 
                 try {
-                    latch1.await(waitTime * 1000, TimeUnit.MILLISECONDS);
+                    // await the test to finish
+                    latchWait.await(waitTime * 1000, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("Interrupted!", ie);
@@ -114,10 +124,10 @@ public class SyncDummyUserFederationProviderFactory extends DummyUserFederationP
 
         });
 
-        // countDown, so the SyncFederationTest can continue
-        latch2.countDown();
+        // countDown, so the SyncFederationTest can finish
+        latchFinished.countDown();
 
-        return new SynchronizationResult();
+        return SynchronizationResult.empty();
     }
 
 }

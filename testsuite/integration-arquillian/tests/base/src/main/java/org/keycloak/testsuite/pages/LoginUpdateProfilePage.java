@@ -17,15 +17,20 @@
 
 package org.keycloak.testsuite.pages;
 
-import org.jboss.arquillian.graphene.page.Page;
-import org.keycloak.testsuite.util.UIUtils;
-import org.openqa.selenium.By;
-import org.openqa.selenium.NoSuchElementException;
-import org.openqa.selenium.WebElement;
-import org.openqa.selenium.support.FindBy;
-
 import static org.keycloak.testsuite.util.UIUtils.clickLink;
 import static org.keycloak.testsuite.util.UIUtils.getTextFromElement;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.jboss.arquillian.graphene.page.Page;
+import org.keycloak.testsuite.util.UIUtils;
+import org.keycloak.testsuite.util.WaitUtils;
+import org.openqa.selenium.By;
+import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.TimeoutException;
+import org.openqa.selenium.WebElement;
+import org.openqa.selenium.support.FindBy;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -56,30 +61,20 @@ public class LoginUpdateProfilePage extends AbstractPage {
     @FindBy(className = "alert-error")
     private WebElement loginAlertErrorMessage;
 
-    public void update(String firstName, String lastName, String email) {
-        updateWithDepartment(firstName, lastName, null, email);
+    public void update(String firstName, String lastName) {
+        prepareUpdate().firstName(firstName).lastName(lastName).submit();
     }
-    
-    public void updateWithDepartment(String firstName, String lastName, String department, String email) {
-        if (firstName != null) {
-            firstNameInput.clear();
-            firstNameInput.sendKeys(firstName);
-        }
-        if (lastName != null) {
-            lastNameInput.clear();
-            lastNameInput.sendKeys(lastName);
-        }
-        if (email != null) {
-            emailInput.clear();
-            emailInput.sendKeys(email);
-        }
 
-        if(department != null) {
-            departmentInput.clear();
-            departmentInput.sendKeys(department);
-        }
-        
-        clickLink(submitButton);
+    public void update(String firstName, String lastName, String email) {
+        prepareUpdate().firstName(firstName).lastName(lastName).email(email).submit();
+    }
+
+    public void update(Map<String, String> attributes) {
+        prepareUpdate().otherProfileAttribute(attributes).submit();
+    }
+
+    public Update prepareUpdate() {
+        return new Update(this);
     }
 
     public void cancel() {
@@ -101,11 +96,11 @@ public class LoginUpdateProfilePage extends AbstractPage {
     public String getLastName() {
         return lastNameInput.getAttribute("value");
     }
-
+    
     public String getEmail() {
         return emailInput.getAttribute("value");
     }
-    
+
     public String getDepartment() {
         return departmentInput.getAttribute("value");
     }
@@ -124,6 +119,16 @@ public class LoginUpdateProfilePage extends AbstractPage {
     
     public String getLabelForField(String fieldId) {
         return driver.findElement(By.cssSelector("label[for="+fieldId+"]")).getText();
+    }
+
+    public WebElement getElementById(String fieldId) {
+        try {
+            By id = By.id(fieldId);
+            WaitUtils.waitUntilElement(id);
+            return driver.findElement(id);
+        } catch (NoSuchElementException | TimeoutException ignore) {
+            return null;
+        }
     }
     
     public boolean isDepartmentPresent() {
@@ -145,6 +150,110 @@ public class LoginUpdateProfilePage extends AbstractPage {
             return cancelAIAButton.isDisplayed();
         } catch (NoSuchElementException e) {
             return false;
+        }
+    }
+
+    public void setAttribute(String elementId, String value) {
+        WebElement element = getElementById(elementId);
+
+        if (element != null) {
+            element.clear();
+            element.sendKeys(value);
+        }
+    }
+
+    public void clickAddAttributeValue(String elementId) {
+        WebElement element = getElementById("kc-add-" + elementId);
+
+        if (element != null) {
+            element.click();
+        }
+    }
+
+    public void clickRemoveAttributeValue(String elementId) {
+        WebElement element = getElementById("kc-remove-" + elementId);
+
+        if (element != null) {
+            element.click();
+        }
+    }
+
+    public String getAttribute(String elementId) {
+        WebElement element = getElementById(elementId);
+
+        if (element != null) {
+            return element.getAttribute("value");
+        }
+
+        return null;
+    }
+
+    public static class Update {
+        private final LoginUpdateProfilePage page;
+        private String firstName;
+        private String lastName;
+        private String department;
+        private String email;
+        private final Map<String, String> other = new LinkedHashMap<>();
+
+        protected Update(LoginUpdateProfilePage page) {
+            this.page = page;
+        }
+
+        public Update firstName(String firstName) {
+            this.firstName = firstName;
+            return this;
+        }
+
+        public Update lastName(String lastName) {
+            this.lastName = lastName;
+            return this;
+        }
+
+        public Update department(String department) {
+            this.department = department;
+            return this;
+        }
+
+        public Update email(String email) {
+            this.email = email;
+            return this;
+        }
+
+        public Update otherProfileAttribute(Map<String, String> attributes) {
+            other.putAll(attributes);
+            return this;
+        }
+
+        public void submit() {
+            if (firstName != null) {
+                page.firstNameInput.clear();
+                page.firstNameInput.sendKeys(firstName);
+            }
+            if (lastName != null) {
+                page.lastNameInput.clear();
+                page.lastNameInput.sendKeys(lastName);
+            }
+
+            if(department != null) {
+                page.departmentInput.clear();
+                page.departmentInput.sendKeys(department);
+            }
+
+            if (email != null) {
+                page.emailInput.clear();
+                page.emailInput.sendKeys(email);
+            }
+
+            for (Map.Entry<String, String> entry : other.entrySet()) {
+                WebElement el = page.driver.findElement(By.id(entry.getKey()));
+                if (el != null) {
+                    el.clear();
+                    el.sendKeys(entry.getValue());
+                }
+            }
+
+            clickLink(page.submitButton);
         }
     }
 

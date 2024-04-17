@@ -1,4 +1,5 @@
 <#import "template.ftl" as layout>
+<#import "password-commons.ftl" as passwordCommons>
 <@layout.registrationLayout displayRequiredFields=false displayMessage=!messagesPerField.existsError('totp','userLabel'); section>
 
     <#if section = "header">
@@ -9,8 +10,8 @@
                 <p>${msg("loginTotpStep1")}</p>
 
                 <ul id="kc-totp-supported-apps">
-                    <#list totp.policy.supportedApplications as app>
-                        <li>${app}</li>
+                    <#list totp.supportedApplications as app>
+                        <li>${msg(app)}</li>
                     </#list>
                 </ul>
             </li>
@@ -86,6 +87,10 @@
                         </span>
                     </#if>
                 </div>
+            </div>
+
+            <div class="${properties.kcFormGroupClass!}">
+                <@passwordCommons.logoutOtherSessions/>
             </div>
 
             <#if isAppInitiatedAction??>

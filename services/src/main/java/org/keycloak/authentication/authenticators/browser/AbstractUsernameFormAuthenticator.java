@@ -36,8 +36,8 @@ import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.messages.Messages;
 
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 
 import static org.keycloak.authentication.authenticators.util.AuthenticatorUtils.getDisabledByBruteForceEventError;
 import static org.keycloak.services.validation.Validation.FIELD_PASSWORD;
@@ -53,6 +53,10 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
 
     public static final String REGISTRATION_FORM_ACTION = "registration_form";
     public static final String ATTEMPTED_USERNAME = "ATTEMPTED_USERNAME";
+    public static final String SESSION_INVALID = "SESSION_INVALID";
+
+    // Flag is true if user was already set in the authContext before this authenticator was triggered. In this case we skip clearing of the user after unsuccessful password authentication
+    protected static final String USER_SET_BEFORE_USERNAME_PASSWORD_AUTH = "USER_SET_BEFORE_USERNAME_PASSWORD_AUTH";
 
     @Override
     public void action(AuthenticationFlowContext context) {
@@ -96,27 +100,16 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
         return challengeResponse;
     }
 
-    protected void runDefaultDummyHash(AuthenticationFlowContext context) {
-        PasswordHashProvider hash = context.getSession().getProvider(PasswordHashProvider.class, PasswordPolicy.HASH_ALGORITHM_DEFAULT);
-        hash.encode("SlightlyLongerDummyPassword", PasswordPolicy.HASH_ITERATIONS_DEFAULT);
-    }
-
     protected void dummyHash(AuthenticationFlowContext context) {
-        PasswordPolicy policy = context.getRealm().getPasswordPolicy();
-        if (policy == null) {
-            runDefaultDummyHash(context);
-            return;
+        PasswordPolicy passwordPolicy = context.getRealm().getPasswordPolicy();
+        PasswordHashProvider provider;
+        if (passwordPolicy != null && passwordPolicy.getHashAlgorithm() != null) {
+            provider = context.getSession().getProvider(PasswordHashProvider.class, passwordPolicy.getHashAlgorithm());
         } else {
-            PasswordHashProvider hash = context.getSession().getProvider(PasswordHashProvider.class, policy.getHashAlgorithm());
-            if (hash == null) {
-                runDefaultDummyHash(context);
-                return;
-
-            } else {
-                hash.encode("SlightlyLongerDummyPassword", policy.getHashIterations());
-            }
+            provider = context.getSession().getProvider(PasswordHashProvider.class);
         }
-
+        int iterations = passwordPolicy != null ? passwordPolicy.getHashIterations() : -1;
+        provider.encode("SlightlyLongerDummyPassword", iterations);
     }
 
     public void testInvalidUser(AuthenticationFlowContext context, UserModel user) {
@@ -142,20 +135,32 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
 
 
     public boolean validateUserAndPassword(AuthenticationFlowContext context, MultivaluedMap<String, String> inputData)  {
-        context.clearUser();
         UserModel user = getUser(context, inputData);
-        return user != null && validatePassword(context, user, inputData) && validateUser(context, user, inputData);
+        boolean shouldClearUserFromCtxAfterBadPassword = !isUserAlreadySetBeforeUsernamePasswordAuth(context);
+        return user != null && validatePassword(context, user, inputData, shouldClearUserFromCtxAfterBadPassword) && validateUser(context, user, inputData);
     }
 
     public boolean validateUser(AuthenticationFlowContext context, MultivaluedMap<String, String> inputData) {
-        context.clearUser();
         UserModel user = getUser(context, inputData);
         return user != null && validateUser(context, user, inputData);
     }
 
     private UserModel getUser(AuthenticationFlowContext context, MultivaluedMap<String, String> inputData) {
+        if (isUserAlreadySetBeforeUsernamePasswordAuth(context)) {
+            // Get user from the authentication context in case he was already set before this authenticator
+            UserModel user = context.getUser();
+            testInvalidUser(context, user);
+            return user;
+        } else {
+            // Normal login. In this case this authenticator is supposed to establish identity of the user from the provided username
+            context.clearUser();
+            return getUserFromForm(context, inputData);
+        }
+    }
+
+    private UserModel getUserFromForm(AuthenticationFlowContext context, MultivaluedMap<String, String> inputData) {
         String username = inputData.getFirst(AuthenticationManager.FORM_USERNAME);
-        if (username == null) {
+        if (username == null || username.isEmpty()) {
             context.getEvent().error(Errors.USER_NOT_FOUND);
             Response challengeResponse = challenge(context, getDefaultChallengeMessage(context), FIELD_USERNAME);
             context.failureChallenge(AuthenticationFlowError.INVALID_USER, challengeResponse);
@@ -192,7 +197,7 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
             return false;
         }
         String rememberMe = inputData.getFirst("rememberMe");
-        boolean remember = rememberMe != null && rememberMe.equalsIgnoreCase("on");
+        boolean remember = context.getRealm().isRememberMe() && rememberMe != null && rememberMe.equalsIgnoreCase("on");
         if (remember) {
             context.getAuthenticationSession().setAuthNote(Details.REMEMBER_ME, "true");
             context.getEvent().detail(Details.REMEMBER_ME, "true");
@@ -203,10 +208,6 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
         return true;
     }
 
-    public boolean validatePassword(AuthenticationFlowContext context, UserModel user, MultivaluedMap<String, String> inputData) {
-        return validatePassword(context, user, inputData, true);
-    }
-
     public boolean validatePassword(AuthenticationFlowContext context, UserModel user, MultivaluedMap<String, String> inputData, boolean clearUser) {
         String password = inputData.getFirst(CredentialRepresentation.PASSWORD);
         if (password == null || password.isEmpty()) {
@@ -215,7 +216,8 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
 
         if (isDisabledByBruteForce(context, user)) return false;
 
-        if (password != null && !password.isEmpty() && context.getSession().userCredentialManager().isValid(context.getRealm(), user, UserCredentialModel.password(password))) {
+        if (password != null && !password.isEmpty() && user.credentialManager().isValid(UserCredentialModel.password(password))) {
+            context.getAuthenticationSession().setAuthNote(AuthenticationManager.PASSWORD_VALIDATED, "true");
             return true;
         } else {
             return badPasswordHandler(context, user, clearUser,false);
@@ -226,6 +228,13 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
     private boolean badPasswordHandler(AuthenticationFlowContext context, UserModel user, boolean clearUser,boolean isEmptyPassword) {
         context.getEvent().user(user);
         context.getEvent().error(Errors.INVALID_USER_CREDENTIALS);
+
+        if (isUserAlreadySetBeforeUsernamePasswordAuth(context)) {
+            LoginFormsProvider form = context.form();
+            form.setAttribute(LoginFormsProvider.USERNAME_HIDDEN, true);
+            form.setAttribute(LoginFormsProvider.REGISTRATION_DISABLED, true);
+        }
+
         Response challengeResponse = challenge(context, getDefaultChallengeMessage(context), FIELD_PASSWORD);
         if(isEmptyPassword) {
             context.forceChallenge(challengeResponse);
@@ -240,7 +249,7 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
     }
 
     protected boolean isDisabledByBruteForce(AuthenticationFlowContext context, UserModel user) {
-        String bruteForceError = getDisabledByBruteForceEventError(context.getProtector(), context.getSession(), context.getRealm(), user);
+        String bruteForceError = getDisabledByBruteForceEventError(context, user);
         if (bruteForceError != null) {
             context.getEvent().user(user);
             context.getEvent().error(bruteForceError);
@@ -252,6 +261,15 @@ public abstract class AbstractUsernameFormAuthenticator extends AbstractFormAuth
     }
 
     protected String getDefaultChallengeMessage(AuthenticationFlowContext context) {
-        return Messages.INVALID_USER;
+        if (isUserAlreadySetBeforeUsernamePasswordAuth(context)) {
+            return Messages.INVALID_PASSWORD;
+        } else {
+            return Messages.INVALID_USER;
+        }
+    }
+
+    protected boolean isUserAlreadySetBeforeUsernamePasswordAuth(AuthenticationFlowContext context) {
+        String userSet = context.getAuthenticationSession().getAuthNote(USER_SET_BEFORE_USERNAME_PASSWORD_AUTH);
+        return Boolean.parseBoolean(userSet);
     }
 }

@@ -28,7 +28,10 @@ import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.DefaultKeyProviders;
 import org.keycloak.representations.idm.CredentialRepresentation;
+import org.keycloak.representations.userprofile.config.UPAttribute;
+import org.keycloak.representations.userprofile.config.UPConfig;
 import org.keycloak.services.ServicesLogger;
+import org.keycloak.userprofile.UserProfileProvider;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -43,7 +46,7 @@ public class ApplianceBootstrap {
     }
 
     public boolean isNewInstall() {
-        if (session.realms().getRealm(Config.getAdminRealm()) != null) {
+        if (session.realms().getRealmByName(Config.getAdminRealm()) != null) {
             return false;
         } else {
             return true;
@@ -51,7 +54,7 @@ public class ApplianceBootstrap {
     }
 
     public boolean isNoMasterUser() {
-        RealmModel realm = session.realms().getRealm(Config.getAdminRealm());
+        RealmModel realm = session.realms().getRealmByName(Config.getAdminRealm());
         return session.users().getUsersCount(realm) == 0;
     }
 
@@ -64,7 +67,7 @@ public class ApplianceBootstrap {
         ServicesLogger.LOGGER.initializingAdminRealm(adminRealmName);
 
         RealmManager manager = new RealmManager(session);
-        RealmModel realm = manager.createRealm(adminRealmName, adminRealmName);
+        RealmModel realm = manager.createRealm(adminRealmName);
         realm.setName(adminRealmName);
         realm.setDisplayName(Version.NAME);
         realm.setDisplayNameHtml(Version.NAME_HTML);
@@ -89,25 +92,39 @@ public class ApplianceBootstrap {
         session.getContext().setRealm(realm);
         DefaultKeyProviders.createProviders(realm);
 
+        // In master realm the UP config is more relaxed
+        // firstName, lastName and email are not required (all attributes except username)
+        UserProfileProvider UserProfileProvider = session.getProvider(UserProfileProvider.class);
+        UPConfig upConfig = UserProfileProvider.getConfiguration();
+        for (UPAttribute attr : upConfig.getAttributes()) {
+            if (!UserModel.USERNAME.equals(attr.getName())) {
+                attr.setRequired(null);
+            }
+        }
+        UserProfileProvider.setConfiguration(upConfig);
+
         return true;
     }
 
     public void createMasterRealmUser(String username, String password) {
-        RealmModel realm = session.realms().getRealm(Config.getAdminRealm());
+        RealmModel realm = session.realms().getRealmByName(Config.getAdminRealm());
         session.getContext().setRealm(realm);
 
         if (session.users().getUsersCount(realm) > 0) {
-            throw new IllegalStateException("Can't create initial user as users already exists");
+            ServicesLogger.LOGGER.addAdminUserFailedAdminExists(Config.getAdminRealm());
+            return;
         }
 
         UserModel adminUser = session.users().addUser(realm, username);
         adminUser.setEnabled(true);
 
         UserCredentialModel usrCredModel = UserCredentialModel.password(password);
-        session.userCredentialManager().updateCredential(realm, adminUser, usrCredModel);
+        adminUser.credentialManager().updateCredential(usrCredModel);
 
         RoleModel adminRole = realm.getRole(AdminRoles.ADMIN);
         adminUser.grantRole(adminRole);
+
+        ServicesLogger.LOGGER.addUserSuccess(username, Config.getAdminRealm());
     }
 
 }

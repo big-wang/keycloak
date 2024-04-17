@@ -18,10 +18,10 @@ package org.keycloak.services.resources.admin;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.jboss.logging.Logger;
-import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.HttpRequest;
-import org.jboss.resteasy.spi.HttpResponse;
-import javax.ws.rs.NotFoundException;
+import org.jboss.resteasy.reactive.NoCache;
+import org.keycloak.http.HttpRequest;
+import org.keycloak.http.HttpResponse;
+import jakarta.ws.rs.NotFoundException;
 import org.keycloak.Config;
 import org.keycloak.common.ClientConnection;
 import org.keycloak.common.Version;
@@ -36,26 +36,23 @@ import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
 import org.keycloak.services.Urls;
+import org.keycloak.services.cors.Cors;
 import org.keycloak.services.managers.AppAuthManager;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.ClientManager;
 import org.keycloak.services.managers.RealmManager;
-import org.keycloak.services.resources.Cors;
 import org.keycloak.theme.FreeMarkerException;
-import org.keycloak.theme.FreeMarkerUtil;
 import org.keycloak.theme.Theme;
+import org.keycloak.theme.freemarker.FreeMarkerProvider;
 import org.keycloak.urls.UrlType;
 import org.keycloak.utils.MediaType;
 
-import javax.ws.rs.GET;
-import javax.ws.rs.OPTIONS;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.ext.Providers;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.OPTIONS;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -74,25 +71,22 @@ import java.util.stream.Collectors;
 public class AdminConsole {
     protected static final Logger logger = Logger.getLogger(AdminConsole.class);
 
-    @Context
-    protected ClientConnection clientConnection;
+    protected final ClientConnection clientConnection;
 
-    @Context
-    protected HttpRequest request;
+    protected final HttpRequest request;
 
-    @Context
-    protected HttpResponse response;
+    protected final HttpResponse response;
 
-    @Context
-    protected KeycloakSession session;
+    protected final KeycloakSession session;
 
-    @Context
-    protected Providers providers;
+    protected final RealmModel realm;
 
-    protected RealmModel realm;
-
-    public AdminConsole(RealmModel realm) {
-        this.realm = realm;
+    public AdminConsole(KeycloakSession session) {
+        this.session = session;
+        this.realm = session.getContext().getRealm();
+        this.clientConnection = session.getContext().getConnection();
+        this.request = session.getContext().getHttpRequest();
+        this.response = session.getContext().getHttpResponse();
     }
 
     public static class WhoAmI {
@@ -204,12 +198,12 @@ public class AdminConsole {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @NoCache
-    public Response whoAmI(final @Context HttpHeaders headers) {
+    public Response whoAmI(@QueryParam("currentRealm") String currentRealm) {
         RealmManager realmManager = new RealmManager(session);
         AuthenticationManager.AuthResult authResult = new AppAuthManager.BearerTokenAuthenticator(session)
                 .setRealm(realm)
                 .setConnection(clientConnection)
-                .setHeaders(headers)
+                .setHeaders(session.getContext().getRequestHeaders())
                 .authenticate();
 
         if (authResult == null) {
@@ -233,8 +227,11 @@ public class AdminConsole {
         boolean createRealm = false;
         if (realm.equals(masterRealm)) {
             logger.debug("setting up realm access for a master realm user");
-            createRealm = user.hasRole(masterRealm.getRole(AdminRoles.CREATE_REALM));
-            addMasterRealmAccess(user, realmAccess);
+            RoleModel createRealmRole = masterRealm.getRole(AdminRoles.CREATE_REALM);
+            if (createRealmRole != null) {
+                createRealm = user.hasRole(createRealmRole);
+            }
+            addMasterRealmAccess(user, currentRealm != null ? currentRealm : realm.getName(), realmAccess);
         } else {
             logger.debug("setting up realm access for a realm user");
             addRealmAccess(realm, user, realmAccess);
@@ -254,11 +251,9 @@ public class AdminConsole {
         getRealmAdminAccess(realm, realmAdminApp, user, realmAdminAccess);
     }
 
-    private void addMasterRealmAccess(UserModel user, Map<String, Set<String>> realmAdminAccess) {
-        session.realms().getRealmsStream().forEach(realm -> {
-            ClientModel realmAdminApp = realm.getMasterAdminClient();
-            getRealmAdminAccess(realm, realmAdminApp, user, realmAdminAccess);
-        });
+    private void addMasterRealmAccess(UserModel user, String currentRealm, Map<String, Set<String>> realmAdminAccess) {
+        final RealmModel realm = session.realms().getRealmByName(currentRealm);
+        getRealmAdminAccess(realm, realm.getMasterAdminClient(), user, realmAdminAccess);
     }
 
     private static <T> HashSet<T> union(Set<T> set1, Set<T> set2) {
@@ -298,7 +293,7 @@ public class AdminConsole {
         URI redirect = AdminRoot.adminConsoleUrl(session.getContext().getUri(UrlType.ADMIN)).build(realm.getName());
 
         return Response.status(302).location(
-                OIDCLoginProtocolService.logoutUrl(session.getContext().getUri(UrlType.ADMIN)).queryParam("redirect_uri", redirect.toString()).build(realm.getName())
+                OIDCLoginProtocolService.logoutUrl(session.getContext().getUri(UrlType.ADMIN)).queryParam("post_logout_redirect_uri", redirect.toString()).build(realm.getName())
         ).build();
     }
 
@@ -328,7 +323,14 @@ public class AdminConsole {
                 adminBaseUrl = adminBaseUrl.substring(0, adminBaseUrl.length() - 1);
             }
 
+            String kcJsRelativeBasePath = adminBaseUri.getPath();
+
+            if(!kcJsRelativeBasePath.endsWith("/")) {
+                kcJsRelativeBasePath = kcJsRelativeBasePath + "/";
+            }
+
             URI authServerBaseUri = session.getContext().getUri(UrlType.FRONTEND).getBaseUri();
+
             String authServerBaseUrl = authServerBaseUri.toString();
             if (authServerBaseUrl.endsWith("/")) {
                 authServerBaseUrl = authServerBaseUrl.substring(0, authServerBaseUrl.length() - 1);
@@ -339,12 +341,14 @@ public class AdminConsole {
             map.put("consoleBaseUrl", Urls.adminConsoleRoot(adminBaseUri, realm.getName()).getPath());
             map.put("resourceUrl", Urls.themeRoot(adminBaseUri).getPath() + "/admin/" + theme.getName());
             map.put("resourceCommonUrl", Urls.themeRoot(adminBaseUri).getPath() + "/common/keycloak");
+            map.put("keycloakJsUrl", kcJsRelativeBasePath + "js/keycloak.js?version=" + Version.RESOURCES_VERSION);
             map.put("masterRealm", Config.getAdminRealm());
             map.put("resourceVersion", Version.RESOURCES_VERSION);
             map.put("loginRealm", realm.getName());
+            map.put("clientId", Constants.ADMIN_CONSOLE_CLIENT_ID);
             map.put("properties", theme.getProperties());
 
-            FreeMarkerUtil freeMarkerUtil = new FreeMarkerUtil();
+            FreeMarkerProvider freeMarkerUtil = session.getProvider(FreeMarkerProvider.class);
             String result = freeMarkerUtil.processTemplate(map, "index.ftl", theme);
             Response.ResponseBuilder builder = Response.status(Response.Status.OK).type(MediaType.TEXT_HTML_UTF_8).language(Locale.ENGLISH).entity(result);
 

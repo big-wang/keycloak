@@ -22,15 +22,16 @@ import org.keycloak.authentication.AuthenticationFlowError;
 import org.keycloak.authentication.ClientAuthenticationFlowContext;
 import org.keycloak.models.AuthenticationExecutionModel;
 import org.keycloak.models.ClientModel;
+import org.keycloak.protocol.oidc.OIDCClientSecretConfigWrapper;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.util.BasicAuthHelper;
 
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -63,7 +64,7 @@ public class ClientIdAndSecretAuthenticator extends AbstractClientAuthenticator 
         MultivaluedMap<String, String> formData = hasFormData ? context.getHttpRequest().getDecodedFormParameters() : null;
 
         if (authorizationHeader != null) {
-            String[] usernameSecret = BasicAuthHelper.parseHeader(authorizationHeader);
+            String[] usernameSecret = BasicAuthHelper.RFC6749.parseHeader(authorizationHeader);
             if (usernameSecret != null) {
                 client_id = usernameSecret[0];
                 clientSecret = usernameSecret[1];
@@ -121,20 +122,27 @@ public class ClientIdAndSecretAuthenticator extends AbstractClientAuthenticator 
         }
 
         if (clientSecret == null) {
-            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "unauthorized_client", "Client secret not provided in request");
+            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "unauthorized_client", "Invalid client or Invalid client credentials");
             context.challenge(challengeResponse);
             return;
         }
 
         if (client.getSecret() == null) {
-            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "unauthorized_client", "Invalid client secret");
-            context.failure(AuthenticationFlowError.INVALID_CLIENT_CREDENTIALS, challengeResponse);
+            reportFailedAuth(context);
             return;
         }
 
+        OIDCClientSecretConfigWrapper wrapper = OIDCClientSecretConfigWrapper.fromClientModel(client);
+
         if (!client.validateSecret(clientSecret)) {
-            Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "unauthorized_client", "Invalid client secret");
-            context.failure(AuthenticationFlowError.INVALID_CLIENT_CREDENTIALS, challengeResponse);
+            if (!wrapper.validateRotatedSecret(clientSecret)){
+                reportFailedAuth(context);
+                return;
+            }
+        }
+
+        if (wrapper.isClientSecretExpired()){
+            reportFailedAuth(context);
             return;
         }
 
@@ -194,5 +202,15 @@ public class ClientIdAndSecretAuthenticator extends AbstractClientAuthenticator 
         } else {
             return Collections.emptySet();
         }
+    }
+
+    @Override
+    public boolean supportsSecret() {
+        return true;
+    }
+
+    private void reportFailedAuth(ClientAuthenticationFlowContext context) {
+        Response challengeResponse = ClientAuthUtil.errorResponse(Response.Status.UNAUTHORIZED.getStatusCode(), "unauthorized_client", "Invalid client or Invalid client credentials");
+        context.failure(AuthenticationFlowError.INVALID_CLIENT_CREDENTIALS, challengeResponse);
     }
 }

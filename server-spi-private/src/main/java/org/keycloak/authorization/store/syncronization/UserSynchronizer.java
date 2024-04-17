@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,8 +59,9 @@ public class UserSynchronizer implements Synchronizer<UserRemovedEvent> {
 
         attributes.put(Policy.FilterOption.TYPE, new String[] {"user"});
         attributes.put(Policy.FilterOption.CONFIG, new String[] {"users", userModel.getId()});
+        attributes.put(Policy.FilterOption.ANY_OWNER, new String[] {Boolean.TRUE.toString()});
 
-        List<Policy> search = policyStore.findByResourceServer(attributes, null, -1, -1);
+        List<Policy> search = policyStore.find(null, attributes, null, null);
 
         for (Policy policy : search) {
             PolicyProviderFactory policyFactory = authorizationProvider.getProviderFactory(policy.getType());
@@ -69,12 +70,7 @@ public class UserSynchronizer implements Synchronizer<UserRemovedEvent> {
 
             users.remove(userModel.getId());
 
-            if (users.isEmpty()) {
-                policyFactory.onRemove(policy, authorizationProvider);
-                policyStore.delete(policy.getId());
-            } else {
-                policyFactory.onUpdate(policy, representation, authorizationProvider);
-            }
+            policyFactory.onUpdate(policy, representation, authorizationProvider);
         }
     }
 
@@ -84,9 +80,9 @@ public class UserSynchronizer implements Synchronizer<UserRemovedEvent> {
         ResourceStore resourceStore = storeFactory.getResourceStore();
         UserModel userModel = event.getUser();
 
-        resourceStore.findByOwner(userModel.getId(), null, resource -> {
+        resourceStore.findByOwner(null, userModel.getId(), resource -> {
             String resourceId = resource.getId();
-            policyStore.findByResource(resourceId, resource.getResourceServer()).forEach(policy -> {
+            policyStore.findByResource(resource.getResourceServer(), resource).forEach(policy -> {
                 if (policy.getResources().size() == 1) {
                     policyStore.delete(policy.getId());
                 } else {
@@ -105,7 +101,7 @@ public class UserSynchronizer implements Synchronizer<UserRemovedEvent> {
 
         attributes.put(PermissionTicket.FilterOption.OWNER, userModel.getId());
 
-        for (PermissionTicket ticket : ticketStore.find(attributes, null, -1, -1)) {
+        for (PermissionTicket ticket : ticketStore.find(null, attributes, null, null)) {
             ticketStore.delete(ticket.getId());
         }
 
@@ -113,7 +109,7 @@ public class UserSynchronizer implements Synchronizer<UserRemovedEvent> {
         
         attributes.put(PermissionTicket.FilterOption.REQUESTER, userModel.getId());
 
-        for (PermissionTicket ticket : ticketStore.find(attributes, null, -1, -1)) {
+        for (PermissionTicket ticket : ticketStore.find(null, attributes, null, null)) {
             ticketStore.delete(ticket.getId());
         }
     }

@@ -25,12 +25,13 @@ import org.hamcrest.CoreMatchers;
 import org.junit.Before;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.RealmLocalizationResource;
+import org.keycloak.representations.idm.RealmRepresentation;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.ws.rs.NotFoundException;
+import jakarta.ws.rs.NotFoundException;
 
 
 public class RealmLocalizationResourceTest extends AbstractAdminTest {
@@ -39,6 +40,10 @@ public class RealmLocalizationResourceTest extends AbstractAdminTest {
 
     @Before
     public void before() {
+        RealmRepresentation realmRepresentation = adminClient.realm(REALM_NAME).toRepresentation();
+        realmRepresentation.setDefaultLocale("en");
+        adminClient.realm(REALM_NAME).update(realmRepresentation);
+
         adminClient.realm(REALM_NAME).localization().saveRealmLocalizationText("en", "key-a", "text-a_en");
         adminClient.realm(REALM_NAME).localization().saveRealmLocalizationText("en", "key-b", "text-b_en");
         adminClient.realm(REALM_NAME).localization().saveRealmLocalizationText("de", "key-a", "text-a_de");
@@ -64,6 +69,16 @@ public class RealmLocalizationResourceTest extends AbstractAdminTest {
         assertEquals(2, localizations.size());
 
         assertEquals("text-a_en", localizations.get("key-a"));
+        assertEquals("text-b_en", localizations.get("key-b"));
+    }
+
+    @Test
+    public void getRealmLocalizationTextsWithFallback() {
+        Map<String, String> localizations = resource.getRealmLocalizationTexts("de", true);
+        assertNotNull(localizations);
+        assertEquals(2, localizations.size());
+
+        assertEquals("text-a_de", localizations.get("key-a"));
         assertEquals("text-b_en", localizations.get("key-b"));
     }
 

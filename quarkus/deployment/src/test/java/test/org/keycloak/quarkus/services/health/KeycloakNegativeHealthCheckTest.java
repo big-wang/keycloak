@@ -18,13 +18,14 @@ package test.org.keycloak.quarkus.services.health;
 
 import io.agroal.api.AgroalDataSource;
 import io.quarkus.test.QuarkusUnitTest;
+import io.restassured.RestAssured;
 import org.hamcrest.Matchers;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.spec.JavaArchive;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import static io.restassured.RestAssured.given;
 
@@ -36,11 +37,13 @@ public class KeycloakNegativeHealthCheckTest {
     @RegisterExtension
     static final QuarkusUnitTest test = new QuarkusUnitTest()
             .setArchiveProducer(() -> ShrinkWrap.create(JavaArchive.class)
-                    .addAsResource("keycloak.properties", "META-INF/keycloak.properties"));
+                    .addAsResource("keycloak.conf", "META-INF/keycloak.conf"));
 
     @Test
     public void testReadinessDown() {
         agroalDataSource.close();
+
+        RestAssured.port = 9001;
         given()
                 .when().get("/health/ready")
                 .then()

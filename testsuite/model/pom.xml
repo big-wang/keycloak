@@ -4,7 +4,7 @@
     <parent>
         <groupId>org.keycloak</groupId>
         <artifactId>keycloak-testsuite-pom</artifactId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -15,24 +15,32 @@
     <packaging>jar</packaging>
     
     <properties>
+        <maven.compiler.release>11</maven.compiler.release>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+
         <keycloak.connectionsJpa.driver>org.h2.Driver</keycloak.connectionsJpa.driver>
         <keycloak.connectionsJpa.database>keycloak</keycloak.connectionsJpa.database>
         <keycloak.connectionsJpa.user>sa</keycloak.connectionsJpa.user>
         <keycloak.connectionsJpa.password></keycloak.connectionsJpa.password>
-        <keycloak.connectionsJpa.url>jdbc:h2:mem:test;MVCC=TRUE;DB_CLOSE_DELAY=-1</keycloak.connectionsJpa.url>
+        <keycloak.connectionsJpa.url>jdbc:h2:mem:test;DB_CLOSE_DELAY=-1</keycloak.connectionsJpa.url>
         <jdbc.mvn.groupId>com.h2database</jdbc.mvn.groupId>
         <jdbc.mvn.artifactId>h2</jdbc.mvn.artifactId>
         <jdbc.mvn.version>${h2.version}</jdbc.mvn.version>
         <log4j.configuration>file:${project.build.directory}/dependency/log4j.properties</log4j.configuration>
         <jacoco.skip>true</jacoco.skip>
-        <keycloak.profile.feature.map_storage>disabled</keycloak.profile.feature.map_storage>
-        <keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>true</keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>
     </properties>
     
     <dependencies>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.jcip</groupId>
+            <artifactId>jcip-annotations</artifactId>
+            <version>1.0</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
@@ -50,11 +58,17 @@
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-log4j12</artifactId>
+            <artifactId>slf4j-reload4j</artifactId>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
             <artifactId>keycloak-services</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.keycloak</groupId>
+            <artifactId>keycloak-services</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.keycloak</groupId>
@@ -84,21 +98,24 @@
             <artifactId>keycloak-model-infinispan</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.keycloak</groupId>
-            <artifactId>keycloak-model-map</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.keycloak.testsuite</groupId>
             <artifactId>integration-arquillian-testsuite-providers</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.keycloak</groupId>
-            <artifactId>keycloak-model-map-hot-rod</artifactId>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-core-jakarta</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql-jdbc.version}</version>
+        </dependency>
+        <!-- annotations needed to avoid compile time warnings about enums constants -->
+        <dependency>
             <groupId>org.infinispan</groupId>
-            <artifactId>infinispan-server-core</artifactId>
+            <artifactId>infinispan-component-annotations</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
@@ -133,8 +150,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>@{argLine}</argLine>
+                    <!-- See also https://github.com/wildfly/wildfly-core/blob/7e5624cf92ebe4b64a4793a8c0b2a340c0d6d363/core-feature-pack/common/src/main/resources/content/bin/common.sh#L57-L60 -->
+                    <argLine>@{argLine} -Xmx1536m -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
+                        <!-- ensure a log entry if we're running out of JGroup threads -->
+                        <jgroups.thread_dumps_threshold>1</jgroups.thread_dumps_threshold>
                         <!-- keycloak.model.parameters lists parameter classes from 
                              org.keycloak.model.parameters package and determine enabled providers -->
                         <keycloak.model.parameters>${keycloak.model.parameters}</keycloak.model.parameters>
@@ -144,31 +164,36 @@
                         <keycloak.connectionsJpa.default.password>${keycloak.connectionsJpa.password}</keycloak.connectionsJpa.default.password>
                         <keycloak.connectionsJpa.default.url>${keycloak.connectionsJpa.url}</keycloak.connectionsJpa.default.url>
                         <log4j.configuration>file:${project.build.directory}/test-classes/log4j.properties</log4j.configuration> <!-- for the logging to properly work with tests in the 'other' module -->
-                        <keycloak.profile.feature.map_storage>${keycloak.profile.feature.map_storage}</keycloak.profile.feature.map_storage>
-                        <keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>${keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase}</keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <org.jboss.logging.provider>log4j</org.jboss.logging.provider>
+                        <infinispan.version>${infinispan.version}</infinispan.version>
+                        <project.version>${project.version}</project.version>
                     </systemPropertyVariables>
+                    <properties>
+                        <property>
+                            <name>listener</name>
+                            <value>org.keycloak.testsuite.model.AfterSuiteListener</value>
+                        </property>
+                    </properties>
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
+                <artifactId>maven-dependency-plugin</artifactId>
                 <executions>
                     <execution>
-                        <phase>process-test-resources</phase>
+                        <id>copy-testsuite-providers-to-model-testsuite</id>
+                        <phase>generate-test-resources</phase>
                         <goals>
-                            <goal>run</goal>
+                            <goal>copy-dependencies</goal>
                         </goals>
                         <configuration>
-                            <target>
-                                <delete>
-                                    <fileset dir="${project.build.directory}" includes="map-*.json"/>
-                                    <fileset dir="${project.build.directory}" includes="map/**/*.json"/>
-                                </delete>
-                            </target>
+                            <includeGroupIds>org.keycloak.testsuite</includeGroupIds>
+                            <includeArtifactIds>integration-arquillian-testsuite-providers</includeArtifactIds>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>                        
+            </plugin>
         </plugins>
     </build>
     
@@ -188,17 +213,23 @@
         </profile>
 
         <profile>
-            <id>jpa+cross-dc-infinispan</id>
+            <id>jpa+infinispan+persistentsessions</id>
             <properties>
-                <keycloak.model.parameters>CrossDCInfinispan,Jpa</keycloak.model.parameters>
+                <keycloak.model.parameters>Infinispan,Jpa,PersistentUserSessions</keycloak.model.parameters>
             </properties>
         </profile>
 
         <profile>
-            <id>jpa+infinispan-sessions-preloading-disabled</id>
+            <id>jpa+infinispan+client-storage</id>
             <properties>
-                <keycloak.model.parameters>Infinispan,Jpa</keycloak.model.parameters>
-                <keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>false</keycloak.userSessions.infinispan.preloadOfflineSessionsFromDatabase>
+                <keycloak.model.parameters>Jpa,Infinispan,HardcodedClientStorage</keycloak.model.parameters>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>jpa+cross-dc-infinispan</id>
+            <properties>
+                <keycloak.model.parameters>CrossDCInfinispan,Jpa</keycloak.model.parameters>
             </properties>
         </profile>
 
@@ -259,28 +290,17 @@
         </profile>
 
         <profile>
-            <id>map+infinispan</id>
+            <id>.asyncProfiler</id>
+            <activation>
+                <property><name>libasyncProfilerPath</name></property>
+            </activation>
             <properties>
-                <keycloak.profile.feature.map_storage>enabled</keycloak.profile.feature.map_storage>
-                <keycloak.model.parameters>Infinispan,Jpa,Map,ConcurrentHashMapStorage</keycloak.model.parameters>
+                <asyncProfiler.event>cpu</asyncProfiler.event>
+                <asyncProfiler.file>target/profile.html</asyncProfiler.file>
+                <argLine>-agentpath:${libasyncProfilerPath}=start,event=${asyncProfiler.event},file=${asyncProfiler.file}</argLine>
             </properties>
         </profile>
 
-        <profile>
-            <id>map</id>
-            <properties>
-                <keycloak.profile.feature.map_storage>enabled</keycloak.profile.feature.map_storage>
-                <keycloak.model.parameters>Jpa,Map,ConcurrentHashMapStorage</keycloak.model.parameters>
-            </properties>
-        </profile>
-
-        <profile>
-            <id>hot-rod</id>
-            <properties>
-                <keycloak.profile.feature.map_storage>enabled</keycloak.profile.feature.map_storage>
-                <keycloak.model.parameters>Jpa,Map,HotRodMapStorage</keycloak.model.parameters>
-            </properties>
-        </profile>
     </profiles>
     
 </project>

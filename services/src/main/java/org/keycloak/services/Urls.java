@@ -20,15 +20,17 @@ import org.keycloak.common.Version;
 import org.keycloak.models.Constants;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.OIDCLoginProtocolService;
+import org.keycloak.protocol.oidc.endpoints.LogoutEndpoint;
 import org.keycloak.protocol.saml.SamlProtocol;
-import org.keycloak.services.resources.account.AccountFormService;
+import org.keycloak.services.clientregistration.ClientRegistrationService;
+import org.keycloak.services.clientregistration.oidc.OIDCClientRegistrationProvider;
 import org.keycloak.services.resources.IdentityBrokerService;
 import org.keycloak.services.resources.LoginActionsService;
 import org.keycloak.services.resources.RealmsResource;
 import org.keycloak.services.resources.ThemeResource;
 import org.keycloak.services.resources.admin.AdminRoot;
 
-import javax.ws.rs.core.UriBuilder;
+import jakarta.ws.rs.core.UriBuilder;
 import java.net.URI;
 
 /**
@@ -40,41 +42,17 @@ public class Urls {
         return UriBuilder.fromUri(baseUri).path(AdminRoot.class).path("{realm}/console/").build(realmName);
     }
 
-    public static URI accountApplicationsPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "applicationsPage").build(realmName);
-    }
-
     public static UriBuilder accountBase(URI baseUri) {
         return realmBase(baseUri).path(RealmsResource.class, "getAccountService");
     }
 
-    public static URI accountPage(URI baseUri, String realmName) {
-        return accountPageBuilder(baseUri).build(realmName);
-    }
-
-    public static UriBuilder accountPageBuilder(URI baseUri) {
-        return accountBase(baseUri).path(AccountFormService.class, "accountPage");
-    }
-
-    public static URI accountPasswordPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "passwordPage").build(realmName);
-    }
-
-    public static URI accountFederatedIdentityPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "federatedIdentityPage").build(realmName);
-    }
-
-    public static URI accountFederatedIdentityUpdate(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "processFederatedIdentityUpdate").build(realmName);
-    }
-
-    public static URI identityProviderAuthnResponse(URI baseUri, String providerId, String realmName) {
+    public static URI identityProviderAuthnResponse(URI baseUri, String providerAlias, String realmName) {
         return realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .path(IdentityBrokerService.class, "getEndpoint")
-                .build(realmName, providerId);
+                .build(realmName, providerAlias);
     }
 
-    public static URI identityProviderAuthnRequest(URI baseUri, String providerId, String realmName, String accessCode, String clientId, String tabId) {
+    public static URI identityProviderAuthnRequest(URI baseUri, String providerAlias, String realmName, String accessCode, String clientId, String tabId, String clientData) {
         UriBuilder uriBuilder = realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .path(IdentityBrokerService.class, "performLogin");
 
@@ -87,112 +65,73 @@ public class Urls {
         if (tabId != null) {
             uriBuilder.replaceQueryParam(Constants.TAB_ID, tabId);
         }
+        if (clientData != null) {
+            uriBuilder.replaceQueryParam(Constants.CLIENT_DATA, clientData);
+        }
 
-        return uriBuilder.build(realmName, providerId);
+        return uriBuilder.build(realmName, providerAlias);
     }
 
-    public static URI identityProviderLinkRequest(URI baseUri, String providerId, String realmName) {
+    public static URI identityProviderLinkRequest(URI baseUri, String providerAlias, String realmName) {
         UriBuilder uriBuilder = realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .replaceQuery(null)
                 .path(IdentityBrokerService.class, "clientInitiatedAccountLinking");
 
-        return uriBuilder.build(realmName, providerId);
+        return uriBuilder.build(realmName, providerAlias);
     }
 
-    public static URI identityProviderRetrieveToken(URI baseUri, String providerId, String realmName) {
+    public static URI identityProviderRetrieveToken(URI baseUri, String providerAlias, String realmName) {
         return realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .path(IdentityBrokerService.class, "retrieveToken")
-                .build(realmName, providerId);
+                .build(realmName, providerAlias);
     }
 
-    public static URI identityProviderAuthnRequest(URI baseURI, String providerId, String realmName) {
-        return identityProviderAuthnRequest(baseURI, providerId, realmName, null, null, null);
+    public static URI identityProviderAuthnRequest(URI baseURI, String providerAlias, String realmName) {
+        return identityProviderAuthnRequest(baseURI, providerAlias, realmName, null, null, null, null);
     }
 
-    public static URI identityProviderAfterFirstBrokerLogin(URI baseUri, String realmName, String accessCode, String clientId, String tabId) {
+    public static URI identityProviderAfterFirstBrokerLogin(URI baseUri, String realmName, String accessCode, String clientId, String tabId, String clientData) {
         return realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .path(IdentityBrokerService.class, "afterFirstBrokerLogin")
                 .replaceQueryParam(LoginActionsService.SESSION_CODE, accessCode)
                 .replaceQueryParam(Constants.CLIENT_ID, clientId)
                 .replaceQueryParam(Constants.TAB_ID, tabId)
+                .replaceQueryParam(Constants.CLIENT_DATA, clientData)
                 .build(realmName);
     }
 
-    public static URI identityProviderAfterPostBrokerLogin(URI baseUri, String realmName, String accessCode, String clientId, String tabId) {
+    public static URI identityProviderAfterPostBrokerLogin(URI baseUri, String realmName, String accessCode, String clientId, String tabId, String clientData) {
         return realmBase(baseUri).path(RealmsResource.class, "getBrokerService")
                 .path(IdentityBrokerService.class, "afterPostBrokerLoginFlow")
                 .replaceQueryParam(LoginActionsService.SESSION_CODE, accessCode)
                 .replaceQueryParam(Constants.CLIENT_ID, clientId)
+                .replaceQueryParam(Constants.CLIENT_DATA, clientData)
                 .replaceQueryParam(Constants.TAB_ID, tabId)
                 .build(realmName);
     }
 
-    public static URI accountTotpPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "totpPage").build(realmName);
+    public static URI logoutConfirm(URI baseUri, String realmName) {
+        return realmLogout(baseUri).path(LogoutEndpoint.class, "logoutConfirmAction").build(realmName);
     }
 
-    public static URI accountLogPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "logPage").build(realmName);
-    }
-
-    public static URI accountSessionsPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "sessionsPage").build(realmName);
-    }
-
-    public static URI accountLogout(URI baseUri, URI redirectUri, String realmName) {
-        return realmLogout(baseUri).queryParam("redirect_uri", redirectUri).build(realmName);
-    }
-
-    public static URI accountResourcesPage(URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "resourcesPage").build(realmName);
-    }
-
-    public static URI accountResourceDetailPage(String resourceId, URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "resourceDetailPage").build(realmName, resourceId);
-    }
-
-    public static URI accountResourceGrant(String resourceId, URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "grantPermission").build(realmName, resourceId);
-    }
-
-    public static URI accountResourceShare(String resourceId, URI baseUri, String realmName) {
-        return accountBase(baseUri).path(AccountFormService.class, "shareResource").build(realmName, resourceId);
-    }
-
-    public static URI loginActionUpdatePassword(URI baseUri, String realmName) {
-        return loginActionsBase(baseUri).path(LoginActionsService.class, "updatePassword").build(realmName);
-    }
-
-    public static URI loginActionUpdateTotp(URI baseUri, String realmName) {
-        return loginActionsBase(baseUri).path(LoginActionsService.class, "updateTotp").build(realmName);
+    public static URI loginActionsDetachedInfo(URI baseUri, String realmName) {
+        return loginActionsBase(baseUri).path(LoginActionsService.class, "detachedInfo").build(realmName);
     }
 
     public static UriBuilder requiredActionBase(URI baseUri) {
         return loginActionsBase(baseUri).path(LoginActionsService.class, "requiredAction");
     }
 
-
-    public static URI loginActionUpdateProfile(URI baseUri, String realmName) {
-        return loginActionsBase(baseUri).path(LoginActionsService.class, "updateProfile").build(realmName);
-    }
-
-    public static URI loginActionEmailVerification(URI baseUri, String realmName) {
-        return loginActionEmailVerificationBuilder(baseUri).build(realmName);
-    }
-
-    public static UriBuilder loginActionEmailVerificationBuilder(URI baseUri) {
-        return loginActionsBase(baseUri).path(LoginActionsService.class, "emailVerification");
-    }
-
     public static URI loginResetCredentials(URI baseUri, String realmName) {
         return loginResetCredentialsBuilder(baseUri).build(realmName);
     }
 
-    public static UriBuilder actionTokenBuilder(URI baseUri, String tokenString, String clientId, String tabId) {
+    public static UriBuilder actionTokenBuilder(URI baseUri, String tokenString, String clientId, String tabId, String clientData) {
         return loginActionsBase(baseUri).path(LoginActionsService.class, "executeActionToken")
                 .queryParam(Constants.KEY, tokenString)
                 .queryParam(Constants.CLIENT_ID, clientId)
-                .queryParam(Constants.TAB_ID, tabId);
+                .queryParam(Constants.TAB_ID, tabId)
+                .queryParam(Constants.CLIENT_DATA, clientData);
 
     }
 
@@ -220,8 +159,9 @@ public class Urls {
         return loginActionsBase(baseUri).path(LoginActionsService.class, "authenticate").build(realmName);
     }
 
-    public static URI realmLoginRestartPage(URI baseUri, String realmId) {
+    public static URI realmLoginRestartPage(URI baseUri, String realmId, boolean skipLogout) {
         return loginActionsBase(baseUri).path(LoginActionsService.class, "restartSession")
+                .queryParam(Constants.SKIP_LOGOUT, String.valueOf(skipLogout))
                 .build(realmId);
     }
 
@@ -250,10 +190,6 @@ public class Urls {
                 .build(realmName);
     }
 
-    public static String localeCookiePath(URI baseUri, String realmName){
-        return realmBase(baseUri).path(realmName).build().getRawPath();
-    }
-
     public static URI themeRoot(URI baseUri) {
         return themeBase(baseUri).path(Version.RESOURCES_VERSION).build();
     }
@@ -272,5 +208,9 @@ public class Urls {
 
     public static URI samlRequestEndpoint(final URI baseUri, final String realmName) {
         return realmBase(baseUri).path(RealmsResource.class, "getProtocol").build(realmName, SamlProtocol.LOGIN_PROTOCOL);
+    }
+
+    public static URI clientRegistration(URI baseUri, String realm, String protocol, String clientId) {
+        return realmBase(baseUri).path(RealmsResource.class, "getClientsService").path(ClientRegistrationService.class, "provider").path(OIDCClientRegistrationProvider.class, "getOIDC").build(realm, protocol, clientId);
     }
 }

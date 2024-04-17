@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@ import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.store.StoreFactory;
 import org.keycloak.models.jpa.JpaModel;
 
-import javax.persistence.EntityManager;
+import jakarta.persistence.EntityManager;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>

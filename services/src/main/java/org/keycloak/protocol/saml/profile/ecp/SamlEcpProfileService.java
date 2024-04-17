@@ -22,10 +22,11 @@ import org.keycloak.events.EventBuilder;
 import org.keycloak.models.AuthenticationFlowModel;
 import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.ClientModel;
-import org.keycloak.models.RealmModel;
+import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.utils.DefaultAuthenticationFlows;
 import org.keycloak.protocol.saml.JaxrsSAML2BindingBuilder;
+import org.keycloak.protocol.saml.SamlClient;
 import org.keycloak.protocol.saml.SamlConfigAttributes;
 import org.keycloak.protocol.saml.SamlProtocol;
 import org.keycloak.protocol.saml.SamlService;
@@ -36,15 +37,16 @@ import org.keycloak.saml.common.constants.JBossSAMLURIConstants;
 import org.keycloak.saml.common.exceptions.ConfigurationException;
 import org.keycloak.saml.common.exceptions.ProcessingException;
 import org.keycloak.saml.validators.DestinationValidator;
+import org.keycloak.services.ErrorPage;
+import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.w3c.dom.Document;
 
-import javax.ws.rs.core.Response;
-import javax.xml.soap.SOAPException;
-import javax.xml.soap.SOAPHeaderElement;
+import jakarta.ws.rs.core.Response;
+import jakarta.xml.soap.SOAPException;
+import jakarta.xml.soap.SOAPHeaderElement;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -56,8 +58,8 @@ public class SamlEcpProfileService extends SamlService {
     private static final String NS_PREFIX_SAML_PROTOCOL = "samlp";
     private static final String NS_PREFIX_SAML_ASSERTION = "saml";
 
-    public SamlEcpProfileService(RealmModel realm, EventBuilder event, DestinationValidator destinationValidator) {
-        super(realm, event, destinationValidator);
+    public SamlEcpProfileService(KeycloakSession session, EventBuilder event, DestinationValidator destinationValidator) {
+        super(session, event, destinationValidator);
     }
 
     public Response authenticate(InputStream inputStream) {
@@ -67,8 +69,19 @@ public class SamlEcpProfileService extends SamlService {
     public Response authenticate(Document soapMessage) {
         try {
             return new PostBindingProtocol() {
+
+                @Override
+                protected Response error(KeycloakSession session, AuthenticationSessionModel authenticationSession, Response.Status status, String message, Object... parameters) {
+                    return Soap.createFault().code("error").reason(message).build();
+                }
+
                 @Override
                 protected String getBindingType(AuthnRequestType requestAbstractType) {
+                    return SamlProtocol.SAML_SOAP_BINDING;
+                }
+
+                @Override
+                protected String getBindingType() {
                     return SamlProtocol.SAML_SOAP_BINDING;
                 }
 
@@ -79,6 +92,12 @@ public class SamlEcpProfileService extends SamlService {
 
                 @Override
                 protected Response loginRequest(String relayState, AuthnRequestType requestAbstractType, ClientModel client) {
+                    // Do not allow ECP login when client does not support it
+                    if (!new SamlClient(client).allowECPFlow()) {
+                        logger.errorf("Client %s is not allowed to execute ECP flow", client.getClientId());
+                        throw new RuntimeException("Client is not allowed to use ECP profile.");
+                    }
+
                     // force passive authentication when executing this profile
                     requestAbstractType.setIsPassive(true);
                     requestAbstractType.setDestination(session.getContext().getUri().getAbsolutePath());
@@ -99,6 +118,8 @@ public class SamlEcpProfileService extends SamlService {
 
     @Override
     protected Response newBrowserAuthentication(AuthenticationSessionModel authSession, boolean isPassive, boolean redirectToAuthentication, SamlProtocol samlProtocol) {
+        // Saml ECP flow creates only TRANSIENT user sessions
+        authSession.setClientNote(AuthenticationManager.USER_SESSION_PERSISTENT_STATE, UserSessionModel.SessionPersistenceState.TRANSIENT.toString());
         return super.newBrowserAuthentication(authSession, isPassive, redirectToAuthentication, createEcpSamlProtocol());
     }
 

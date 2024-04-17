@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,7 @@ package org.keycloak.authorization.jpa.store;
 
 import static org.keycloak.authorization.UserManagedPermissionUtil.updatePolicy;
 
-import javax.persistence.EntityManager;
+import jakarta.persistence.EntityManager;
 
 import org.keycloak.authorization.jpa.entities.PermissionTicketEntity;
 import org.keycloak.authorization.jpa.entities.PolicyEntity;
@@ -101,7 +101,8 @@ public class PermissionTicketAdapter implements PermissionTicket, JpaModel<Permi
             return null;
         }
 
-        return storeFactory.getPolicyStore().findById(policy.getId(), entity.getResourceServer().getId());
+        ResourceServer resourceServer = storeFactory.getResourceServerStore().findById(entity.getResourceServer().getId());
+        return storeFactory.getPolicyStore().findById(resourceServer, policy.getId());
     }
 
     @Override
@@ -113,7 +114,7 @@ public class PermissionTicketAdapter implements PermissionTicket, JpaModel<Permi
 
     @Override
     public Resource getResource() {
-        return storeFactory.getResourceStore().findById(entity.getResource().getId(), getResourceServer().getId());
+        return storeFactory.getResourceStore().findById(getResourceServer(), entity.getResource().getId());
     }
 
     @Override
@@ -124,7 +125,7 @@ public class PermissionTicketAdapter implements PermissionTicket, JpaModel<Permi
             return null;
         }
 
-        return storeFactory.getScopeStore().findById(scope.getId(), getResourceServer().getId());
+        return storeFactory.getScopeStore().findById(getResourceServer(), scope.getId());
     }
 
     @Override

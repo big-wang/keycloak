@@ -20,13 +20,15 @@ package org.keycloak.models.sessions.infinispan;
 import org.infinispan.Cache;
 import org.infinispan.client.hotrod.RemoteCache;
 import org.infinispan.client.hotrod.exceptions.HotRodClientException;
+import org.infinispan.commons.api.BasicCache;
 import org.infinispan.context.Flag;
 import org.infinispan.stream.CacheCollectors;
 import org.jboss.logging.Logger;
 import org.keycloak.cluster.ClusterProvider;
+import org.keycloak.common.Profile;
+import org.keycloak.common.Profile.Feature;
 import org.keycloak.common.util.Retry;
 import org.keycloak.common.util.Time;
-import org.keycloak.device.DeviceActivityManager;
 import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
@@ -34,12 +36,15 @@ import org.keycloak.models.ModelException;
 import org.keycloak.models.OfflineUserSessionModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
+import org.keycloak.models.UserProvider;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.UserSessionProvider;
 import org.keycloak.models.session.UserSessionPersisterProvider;
+import org.keycloak.models.sessions.infinispan.changes.SerializeExecutionsByKey;
 import org.keycloak.models.sessions.infinispan.changes.Tasks;
 import org.keycloak.models.sessions.infinispan.changes.sessions.CrossDCLastSessionRefreshStore;
 import org.keycloak.models.sessions.infinispan.changes.sessions.PersisterLastSessionRefreshStore;
+import org.keycloak.models.sessions.infinispan.entities.SessionEntity;
 import org.keycloak.models.sessions.infinispan.remotestore.RemoteCacheInvoker;
 import org.keycloak.models.sessions.infinispan.changes.SessionEntityWrapper;
 import org.keycloak.models.sessions.infinispan.changes.InfinispanChangelogBasedTransaction;
@@ -50,18 +55,19 @@ import org.keycloak.models.sessions.infinispan.entities.UserSessionEntity;
 import org.keycloak.models.sessions.infinispan.events.RealmRemovedSessionEvent;
 import org.keycloak.models.sessions.infinispan.events.RemoveUserSessionsEvent;
 import org.keycloak.models.sessions.infinispan.events.SessionEventsSenderTransaction;
-import org.keycloak.models.sessions.infinispan.stream.Comparators;
 import org.keycloak.models.sessions.infinispan.stream.Mappers;
 import org.keycloak.models.sessions.infinispan.stream.SessionPredicate;
 import org.keycloak.models.sessions.infinispan.stream.UserSessionPredicate;
 import org.keycloak.models.sessions.infinispan.util.FuturesHelper;
 import org.keycloak.models.sessions.infinispan.util.InfinispanKeyGenerator;
 import org.keycloak.connections.infinispan.InfinispanUtil;
+import org.keycloak.models.light.LightweightUserAdapter;
 import org.keycloak.models.sessions.infinispan.util.SessionTimeouts;
 
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -70,6 +76,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -78,12 +85,13 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
+import static org.keycloak.models.Constants.SESSION_NOTE_LIGHTWEIGHT_USER;
 import static org.keycloak.utils.StreamsUtil.paginatedStream;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
-public class InfinispanUserSessionProvider implements UserSessionProvider {
+public class InfinispanUserSessionProvider implements UserSessionProvider, SessionRefreshStore {
 
     private static final Logger log = Logger.getLogger(InfinispanUserSessionProvider.class);
 
@@ -108,7 +116,9 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     protected final RemoteCacheInvoker remoteCacheInvoker;
     protected final InfinispanKeyGenerator keyGenerator;
 
-    protected final boolean loadOfflineSessionsStatsFromDatabase;
+    protected final SessionFunction offlineSessionCacheEntryLifespanAdjuster;
+
+    protected final SessionFunction offlineClientSessionCacheEntryLifespanAdjuster;
 
     public InfinispanUserSessionProvider(KeycloakSession session,
                                          RemoteCacheInvoker remoteCacheInvoker,
@@ -120,7 +130,12 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                                          Cache<String, SessionEntityWrapper<UserSessionEntity>> offlineSessionCache,
                                          Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessionCache,
                                          Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> offlineClientSessionCache,
-                                         boolean loadOfflineSessionsStatsFromDatabase) {
+                                         SessionFunction<UserSessionEntity> offlineSessionCacheEntryLifespanAdjuster,
+                                         SessionFunction<AuthenticatedClientSessionEntity> offlineClientSessionCacheEntryLifespanAdjuster,
+                                         SerializeExecutionsByKey<String> serializerSession,
+                                         SerializeExecutionsByKey<String> serializerOfflineSession,
+                                         SerializeExecutionsByKey<UUID> serializerClientSession,
+                                         SerializeExecutionsByKey<UUID> serializerOfflineClientSession) {
         this.session = session;
 
         this.sessionCache = sessionCache;
@@ -128,10 +143,10 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         this.offlineSessionCache = offlineSessionCache;
         this.offlineClientSessionCache = offlineClientSessionCache;
 
-        this.sessionTx = new InfinispanChangelogBasedTransaction<>(session, sessionCache, remoteCacheInvoker, SessionTimeouts::getUserSessionLifespanMs, SessionTimeouts::getUserSessionMaxIdleMs);
-        this.offlineSessionTx = new InfinispanChangelogBasedTransaction<>(session, offlineSessionCache, remoteCacheInvoker, SessionTimeouts::getOfflineSessionLifespanMs, SessionTimeouts::getOfflineSessionMaxIdleMs);
-        this.clientSessionTx = new InfinispanChangelogBasedTransaction<>(session, clientSessionCache, remoteCacheInvoker, SessionTimeouts::getClientSessionLifespanMs, SessionTimeouts::getClientSessionMaxIdleMs);
-        this.offlineClientSessionTx = new InfinispanChangelogBasedTransaction<>(session, offlineClientSessionCache, remoteCacheInvoker, SessionTimeouts::getOfflineClientSessionLifespanMs, SessionTimeouts::getOfflineClientSessionMaxIdleMs);
+        this.sessionTx = new InfinispanChangelogBasedTransaction<>(session, sessionCache, remoteCacheInvoker, SessionTimeouts::getUserSessionLifespanMs, SessionTimeouts::getUserSessionMaxIdleMs, serializerSession);
+        this.offlineSessionTx = new InfinispanChangelogBasedTransaction<>(session, offlineSessionCache, remoteCacheInvoker, offlineSessionCacheEntryLifespanAdjuster, SessionTimeouts::getOfflineSessionMaxIdleMs, serializerOfflineSession);
+        this.clientSessionTx = new InfinispanChangelogBasedTransaction<>(session, clientSessionCache, remoteCacheInvoker, SessionTimeouts::getClientSessionLifespanMs, SessionTimeouts::getClientSessionMaxIdleMs, serializerClientSession);
+        this.offlineClientSessionTx = new InfinispanChangelogBasedTransaction<>(session, offlineClientSessionCache, remoteCacheInvoker, offlineClientSessionCacheEntryLifespanAdjuster, SessionTimeouts::getOfflineClientSessionMaxIdleMs, serializerOfflineClientSession);
 
         this.clusterEventsSenderTx = new SessionEventsSenderTransaction(session);
 
@@ -140,7 +155,8 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         this.persisterLastSessionRefreshStore = persisterLastSessionRefreshStore;
         this.remoteCacheInvoker = remoteCacheInvoker;
         this.keyGenerator = keyGenerator;
-        this.loadOfflineSessionsStatsFromDatabase = loadOfflineSessionsStatsFromDatabase;
+        this.offlineSessionCacheEntryLifespanAdjuster = offlineSessionCacheEntryLifespanAdjuster;
+        this.offlineClientSessionCacheEntryLifespanAdjuster = offlineClientSessionCacheEntryLifespanAdjuster;
 
         session.getTransactionManager().enlistAfterCompletion(clusterEventsSenderTx);
         session.getTransactionManager().enlistAfterCompletion(sessionTx);
@@ -165,15 +181,18 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         return offline ? offlineClientSessionTx : clientSessionTx;
     }
 
-    protected CrossDCLastSessionRefreshStore getLastSessionRefreshStore() {
+    @Override
+    public CrossDCLastSessionRefreshStore getLastSessionRefreshStore() {
         return lastSessionRefreshStore;
     }
 
-    protected CrossDCLastSessionRefreshStore getOfflineLastSessionRefreshStore() {
+    @Override
+    public CrossDCLastSessionRefreshStore getOfflineLastSessionRefreshStore() {
         return offlineLastSessionRefreshStore;
     }
 
-    protected PersisterLastSessionRefreshStore getPersisterLastSessionRefreshStore() {
+    @Override
+    public PersisterLastSessionRefreshStore getPersisterLastSessionRefreshStore() {
         return persisterLastSessionRefreshStore;
     }
 
@@ -187,16 +206,21 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         final UUID clientSessionId = keyGenerator.generateKeyUUID(session, clientSessionCache);
         AuthenticatedClientSessionEntity entity = new AuthenticatedClientSessionEntity(clientSessionId);
         entity.setRealmId(realm.getId());
+        entity.setClientId(client.getId());
         entity.setTimestamp(Time.currentTime());
         entity.getNotes().put(AuthenticatedClientSessionModel.STARTED_AT_NOTE, String.valueOf(entity.getTimestamp()));
+        entity.getNotes().put(AuthenticatedClientSessionModel.USER_SESSION_STARTED_AT_NOTE, String.valueOf(userSession.getStarted()));
+        if (userSession.isRememberMe()) {
+            entity.getNotes().put(AuthenticatedClientSessionModel.USER_SESSION_REMEMBER_ME_NOTE, "true");
+        }
 
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(false);
         InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(false);
         AuthenticatedClientSessionAdapter adapter = new AuthenticatedClientSessionAdapter(session, this, entity, client, userSession, clientSessionUpdateTx, false);
 
         // For now, the clientSession is considered transient in case that userSession was transient
-        UserSessionModel.SessionPersistenceState persistenceState = (userSession instanceof UserSessionAdapter && ((UserSessionAdapter) userSession).getPersistenceState() != null) ?
-                ((UserSessionAdapter) userSession).getPersistenceState() : UserSessionModel.SessionPersistenceState.PERSISTENT;
+        UserSessionModel.SessionPersistenceState persistenceState = userSession.getPersistenceState() != null ?
+                userSession.getPersistenceState() : UserSessionModel.SessionPersistenceState.PERSISTENT;
 
         SessionUpdateTask<AuthenticatedClientSessionEntity> createClientSessionTask = Tasks.addIfAbsentSync();
         clientSessionUpdateTx.addTask(clientSessionId, createClientSessionTask, entity, persistenceState);
@@ -208,14 +232,12 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     }
 
     @Override
-    public UserSessionModel createUserSession(RealmModel realm, UserModel user, String loginUsername, String ipAddress, String authMethod, boolean rememberMe, String brokerSessionId, String brokerUserId) {
-        final String userSessionId = keyGenerator.generateKeyString(session, sessionCache);
-        return createUserSession(userSessionId, realm, user, loginUsername, ipAddress, authMethod, rememberMe, brokerSessionId, brokerUserId, UserSessionModel.SessionPersistenceState.PERSISTENT);
-    }
-
-    @Override
     public UserSessionModel createUserSession(String id, RealmModel realm, UserModel user, String loginUsername, String ipAddress,
                                               String authMethod, boolean rememberMe, String brokerSessionId, String brokerUserId, UserSessionModel.SessionPersistenceState persistenceState) {
+        if (id == null) {
+            id = keyGenerator.generateKeyString(session, sessionCache);
+        }
+
         UserSessionEntity entity = new UserSessionEntity();
         entity.setId(id);
         updateSessionEntity(entity, realm, user, loginUsername, ipAddress, authMethod, rememberMe, brokerSessionId, brokerUserId);
@@ -223,17 +245,14 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         SessionUpdateTask<UserSessionEntity> createSessionTask = Tasks.addIfAbsentSync();
         sessionTx.addTask(id, createSessionTask, entity, persistenceState);
 
-        UserSessionAdapter adapter = wrap(realm, entity, false);
+        UserSessionAdapter adapter = user instanceof LightweightUserAdapter
+          ? wrap(realm, entity, false, user)
+          : wrap(realm, entity, false);
         adapter.setPersistenceState(persistenceState);
-        
-        if (adapter != null) {
-            DeviceActivityManager.attachDevice(adapter, session);
-        }
-        
         return adapter;
     }
 
-    void updateSessionEntity(UserSessionEntity entity, RealmModel realm, UserModel user, String loginUsername, String ipAddress, String authMethod, boolean rememberMe, String brokerSessionId, String brokerUserId) {
+    static void updateSessionEntity(UserSessionEntity entity, RealmModel realm, UserModel user, String loginUsername, String ipAddress, String authMethod, boolean rememberMe, String brokerSessionId, String brokerUserId) {
         entity.setRealmId(realm.getId());
         entity.setUser(user.getId());
         entity.setLoginUsername(loginUsername);
@@ -288,7 +307,12 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
             return null;
         }
 
-        return importUserSession(realm, offline, persistentUserSession);
+        UserSessionEntity sessionEntity = importUserSession(realm, offline, persistentUserSession);
+        if (sessionEntity == null) {
+            persister.removeUserSession(sessionId, offline);
+        }
+
+        return sessionEntity;
     }
 
     private UserSessionEntity getUserSessionEntityFromCacheOrImportIfNecessary(RealmModel realm, boolean offline, UserSessionModel persistentUserSession) {
@@ -324,9 +348,13 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     private UserSessionEntity getUserSessionEntity(RealmModel realm, String id, boolean offline) {
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> tx = getTransaction(offline);
         SessionEntityWrapper<UserSessionEntity> entityWrapper = tx.get(id);
-        if (entityWrapper==null) return null;
+        if (entityWrapper == null) {
+            return null;
+        }
         UserSessionEntity entity = entityWrapper.getEntity();
-        if (!entity.getRealmId().equals(realm.getId())) return null;
+        if (!entity.getRealmId().equals(realm.getId())) {
+            return null;
+        }
         return entity;
     }
 
@@ -335,55 +363,88 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         return persister.loadUserSessionsStream(realm, user, offline, 0, null)
                 .map(persistentUserSession -> getUserSessionEntityFromCacheOrImportIfNecessary(realm, offline, persistentUserSession))
                 .filter(Objects::nonNull)
-                .map(userSessionEntity -> wrap(realm, userSessionEntity, offline));
+                .map(userSessionEntity -> (UserSessionModel) wrap(realm, userSessionEntity, offline))
+                .filter(Objects::nonNull);
     }
 
 
     protected Stream<UserSessionModel> getUserSessionsStream(RealmModel realm, UserSessionPredicate predicate, boolean offline) {
 
-        if (offline && loadOfflineSessionsStatsFromDatabase) {
+        if (offline) {
 
             // fetch the offline user-sessions from the persistence provider
             UserSessionPersisterProvider persister = session.getProvider(UserSessionPersisterProvider.class);
 
-            UserModel user = session.users().getUserById(realm, predicate.getUserId());
-            if (user != null) {
-                return persister.loadUserSessionsStream(realm, user, offline, 0, null);
-            }
-
-            if (predicate.getBrokerSessionId() != null) {
-                // TODO add support for offline user-session lookup by brokerSessionId
-                // currently it is not possible to access the brokerSessionId in offline user-session in a database agnostic way
-                throw new ModelException("Dynamic database lookup for offline user-sessions by brokerSessionId is currently only supported for preloaded sessions.");
+            if (predicate.getUserId() != null) {
+                UserModel user = session.users().getUserById(realm, predicate.getUserId());
+                if (user != null) {
+                    return persister.loadUserSessionsStream(realm, user, true, 0, null);
+                }
             }
 
             if (predicate.getBrokerUserId() != null) {
-                // TODO add support for offline user-session lookup by brokerUserId
-                // currently it is not possible to access the brokerUserId in offline user-session in a database agnostic way
-                throw new ModelException("Dynamic database lookup for offline user-sessions by brokerUserId is currently only supported for preloaded sessions.");
+                String[] idpAliasSessionId = predicate.getBrokerUserId().split("\\.");
+
+                Map<String, String> attributes = new HashMap<>();
+                attributes.put(UserModel.IDP_ALIAS, idpAliasSessionId[0]);
+                attributes.put(UserModel.IDP_USER_ID, idpAliasSessionId[1]);
+
+                UserProvider userProvider = session.getProvider(UserProvider.class);
+                UserModel userModel = userProvider.searchForUserStream(realm, attributes, 0, null).findFirst().orElse(null);
+                return userModel != null ?
+                        persister.loadUserSessionsStream(realm, userModel, true, 0, null) :
+                        Stream.empty();
             }
 
+            throw new ModelException("For offline sessions, only lookup by userId and brokerUserId is supported");
         }
 
         Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = getCache(offline);
-        cache = CacheDecorators.skipCacheLoaders(cache);
+        cache = CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(cache);
 
         // return a stream that 'wraps' the infinispan cache stream so that the cache stream's elements are read one by one
         // and then mapped locally to avoid serialization issues when trying to manipulate the cache stream directly.
         return StreamSupport.stream(cache.entrySet().stream().filter(predicate).spliterator(), false)
                 .map(Mappers.userSessionEntity())
-                .map(entity -> this.wrap(realm, entity, offline));
+                .map(entity -> this.wrap(realm, entity, offline))
+                .filter(Objects::nonNull).map(Function.identity());
     }
 
     @Override
     public AuthenticatedClientSessionAdapter getClientSession(UserSessionModel userSession, ClientModel client, String clientSessionId, boolean offline) {
-        return getClientSession(userSession, client, clientSessionId == null ? null : UUID.fromString(clientSessionId), offline);
+        if (clientSessionId == null) {
+            return null;
+        }
+
+        AuthenticatedClientSessionEntity clientSessionEntityFromCache = getClientSessionEntity(UUID.fromString(clientSessionId), offline);
+        if (clientSessionEntityFromCache != null) {
+            return wrap(userSession, client, clientSessionEntityFromCache, offline);
+        }
+
+        // offline client session lookup in the persister
+        if (offline) {
+            log.debugf("Offline client session is not found in cache, try to load from db, userSession [%s] clientSessionId [%s] clientId [%s]", userSession.getId(), clientSessionId, client.getClientId());
+            return getClientSessionEntityFromPersistenceProvider(userSession, client, true);
+        }
+
+        return null;
     }
 
-    @Override
-    public AuthenticatedClientSessionAdapter getClientSession(UserSessionModel userSession, ClientModel client, UUID clientSessionId, boolean offline) {
-        AuthenticatedClientSessionEntity entity = getClientSessionEntity(clientSessionId, offline);
-        return wrap(userSession, client, entity, offline);
+    private AuthenticatedClientSessionAdapter getClientSessionEntityFromPersistenceProvider(UserSessionModel userSession, ClientModel client, boolean offline) {
+        UserSessionPersisterProvider persister = session.getProvider(UserSessionPersisterProvider.class);
+        AuthenticatedClientSessionModel clientSession = persister.loadClientSession(session.getContext().getRealm(), client, userSession, offline);
+
+        if (clientSession == null) {
+            return null;
+        }
+
+        AuthenticatedClientSessionAdapter clientAdapter = importClientSession((UserSessionAdapter) userSession, clientSession, getTransaction(offline),
+                getClientSessionTransaction(offline), offline, true);
+
+        if (clientAdapter == null) {
+            persister.removeClientSession(userSession.getId(), client.getId(), offline);
+        }
+        return clientAdapter;
     }
 
     private AuthenticatedClientSessionEntity getClientSessionEntity(UUID id, boolean offline) {
@@ -420,30 +481,20 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     }
 
     protected Stream<UserSessionModel> getUserSessionsStream(final RealmModel realm, ClientModel client, Integer firstResult, Integer maxResults, final boolean offline) {
-
-        if (offline && loadOfflineSessionsStatsFromDatabase) {
+        if (offline) {
             // fetch the actual offline user session count from the database
             UserSessionPersisterProvider persister = session.getProvider(UserSessionPersisterProvider.class);
-            return persister.loadUserSessionsStream(realm, client, offline, firstResult, maxResults);
+            return persister.loadUserSessionsStream(realm, client, true, firstResult, maxResults)
+                    .map(persistentUserSession -> getUserSessionEntityFromCacheOrImportIfNecessary(realm, offline, persistentUserSession))
+                    .filter(Objects::nonNull)
+                    .map(userSessionEntity -> (UserSessionModel) wrap(realm, userSessionEntity, offline))
+                    .filter(Objects::nonNull);
         }
 
-        final String clientUuid = client.getId();
-        UserSessionPredicate predicate = UserSessionPredicate.create(realm.getId()).client(clientUuid);
+        UserSessionPredicate predicate = UserSessionPredicate.create(realm.getId()).client(client.getId());
 
-        return getUserSessionModels(realm, firstResult, maxResults, offline, predicate);
-    }
-
-    protected Stream<UserSessionModel> getUserSessionModels(RealmModel realm, Integer firstResult, Integer maxResults, boolean offline, UserSessionPredicate predicate) {
-        Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = getCache(offline);
-        cache = CacheDecorators.skipCacheLoaders(cache);
-
-        // return a stream that 'wraps' the infinispan cache stream so that the cache stream's elements are read one by one
-        // and then filtered/mapped locally to avoid serialization issues when trying to manipulate the cache stream directly.
-        Stream<UserSessionEntity> stream = StreamSupport.stream(cache.entrySet().stream().filter(predicate).spliterator(), false)
-                .map(Mappers.userSessionEntity())
-                .sorted(Comparators.userSessionLastSessionRefresh());
-
-        return paginatedStream(stream, firstResult, maxResults).map(entity -> this.wrap(realm, entity, offline));
+        return paginatedStream(getUserSessionsStream(realm, predicate, offline)
+                .sorted(Comparator.comparing(UserSessionModel::getLastSessionRefresh)), firstResult, maxResults);
     }
 
     @Override
@@ -516,17 +567,17 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     @Override
     public Map<String, Long> getActiveClientSessionStats(RealmModel realm, boolean offline) {
 
-        if (offline && loadOfflineSessionsStatsFromDatabase) {
+        if (offline) {
             UserSessionPersisterProvider persister = session.getProvider(UserSessionPersisterProvider.class);
-            return persister.getUserSessionsCountsByClients(realm, offline);
+            return persister.getUserSessionsCountsByClients(realm, true);
         }
 
         Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = getCache(offline);
-        cache = CacheDecorators.skipCacheLoaders(cache);
+        cache = CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(cache);
         return cache.entrySet().stream()
                 .filter(UserSessionPredicate.create(realm.getId()))
                 .map(Mappers.authClientSessionSetMapper())
-                .flatMap((Serializable & Function<Set<String>, Stream<? extends String>>)Mappers::toStream)
+                .flatMap((Serializable & Function<Set<String>, Stream<? extends String>>) Mappers::toStream)
                 .collect(
                         CacheCollectors.serializableCollector(
                                 () -> Collectors.groupingBy(Function.identity(), Collectors.counting())
@@ -534,22 +585,15 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                 );
     }
 
-     protected long getUserSessionsCount(RealmModel realm, ClientModel client, boolean offline) {
+    protected long getUserSessionsCount(RealmModel realm, ClientModel client, boolean offline) {
 
-        if (offline && loadOfflineSessionsStatsFromDatabase) {
+        if (offline) {
             // fetch the actual offline user session count from the database
             UserSessionPersisterProvider persister = session.getProvider(UserSessionPersisterProvider.class);
-            return persister.getUserSessionsCount(realm, client, offline);
+            return persister.getUserSessionsCount(realm, client, true);
         }
 
-        Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = getCache(offline);
-        cache = CacheDecorators.skipCacheLoaders(cache);
-
-        final String clientUuid = client.getId();
-
-        return cache.entrySet().stream()
-                .filter(UserSessionPredicate.create(realm.getId()).client(clientUuid))
-                .count();
+        return getUserSessionsStream(realm, UserSessionPredicate.create(realm.getId()).client(client.getId()), offline).count();
     }
 
     @Override
@@ -568,7 +612,7 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     protected void removeUserSessions(RealmModel realm, UserModel user, boolean offline) {
         Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = getCache(offline);
 
-        cache = CacheDecorators.skipCacheLoaders(cache);
+        cache = CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(cache);
 
         Iterator<UserSessionEntity> itr = cache.entrySet().stream().filter(UserSessionPredicate.create(realm.getId()).user(user.getId())).map(Mappers.userSessionEntity()).iterator();
 
@@ -612,7 +656,7 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessionCache = getClientSessionCache(offline);
         Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> localClientSessionCache = CacheDecorators.localCache(clientSessionCache);
 
-        Cache<String, SessionEntityWrapper<UserSessionEntity>> localCacheStoreIgnore = CacheDecorators.skipCacheLoaders(localCache);
+        Cache<String, SessionEntityWrapper<UserSessionEntity>> localCacheStoreIgnore = CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(localCache);
 
         final AtomicInteger userSessionsSize = new AtomicInteger();
 
@@ -692,6 +736,12 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     public void close() {
     }
 
+    @Override
+    public int getStartupTime(RealmModel realm) {
+        // TODO: take realm.getNotBefore() into account?
+        return session.getProvider(ClusterProvider.class).getClusterStartupTime();
+    }
+
     protected void removeUserSession(UserSessionEntity sessionEntity, boolean offline) {
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(offline);
         InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(offline);
@@ -700,21 +750,55 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         userSessionUpdateTx.addTask(sessionEntity.getId(), removeTask);
     }
 
-    UserSessionAdapter wrap(RealmModel realm, UserSessionEntity entity, boolean offline) {
+    UserSessionAdapter wrap(RealmModel realm, UserSessionEntity entity, boolean offline, UserModel user) {
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(offline);
         InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(offline);
-        return entity != null ? new UserSessionAdapter(session, this, userSessionUpdateTx, clientSessionUpdateTx, realm, entity, offline) : null;
+
+        if (entity == null) {
+            return null;
+        }
+
+        return new UserSessionAdapter(session, user, this, userSessionUpdateTx, clientSessionUpdateTx, realm, entity, offline);
+    }
+
+    UserSessionAdapter wrap(RealmModel realm, UserSessionEntity entity, boolean offline) {
+        UserModel user = null;
+        if (Profile.isFeatureEnabled(Feature.TRANSIENT_USERS) && entity.getNotes().containsKey(SESSION_NOTE_LIGHTWEIGHT_USER)) {
+            LightweightUserAdapter lua = LightweightUserAdapter.fromString(session, realm, entity.getNotes().get(SESSION_NOTE_LIGHTWEIGHT_USER));
+            final UserSessionAdapter us = wrap(realm, entity, offline, lua);
+            lua.setUpdateHandler(lua1 -> {
+                if (lua == lua1) {  // Ensure there is no conflicting user model, only the latest lightweight user can be used
+                    us.setNote(SESSION_NOTE_LIGHTWEIGHT_USER, lua1.serialize());
+                }
+            });
+            return us;
+        }
+
+        user = session.users().getUserById(realm, entity.getUser());
+
+        if (user == null) {
+            // remove orphaned user session from the cache and from persister if the session is offline; also removes associated client sessions
+            removeUserSession(entity, offline);
+            if (offline) {
+                session.getProvider(UserSessionPersisterProvider.class).removeUserSession(entity.getId(), true);
+            }
+            return null;
+        }
+
+        return wrap(realm, entity, offline, user);
     }
 
     AuthenticatedClientSessionAdapter wrap(UserSessionModel userSession, ClientModel client, AuthenticatedClientSessionEntity entity, boolean offline) {
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(offline);
         InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(offline);
-        return entity != null ? new AuthenticatedClientSessionAdapter(session,this, entity, client, userSession, clientSessionUpdateTx, offline) : null;
+        return entity != null ? new AuthenticatedClientSessionAdapter(session, this, entity, client, userSession, clientSessionUpdateTx, offline) : null;
     }
 
     UserSessionEntity getUserSessionEntity(RealmModel realm, UserSessionModel userSession, boolean offline) {
         if (userSession instanceof UserSessionAdapter) {
-            if (!userSession.getRealm().equals(realm)) return null;
+            if (!userSession.getRealm().equals(realm)) {
+                return null;
+            }
             return ((UserSessionAdapter) userSession).getEntity();
         } else {
             return getUserSessionEntity(realm, userSession.getId(), offline);
@@ -729,7 +813,7 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         // started and lastSessionRefresh set to current time
         int currentTime = Time.currentTime();
         offlineUserSession.getEntity().setStarted(currentTime);
-        offlineUserSession.setLastSessionRefresh(currentTime);
+        offlineUserSession.getEntity().setLastSessionRefresh(currentTime);
 
         session.getProvider(UserSessionPersisterProvider.class).createUserSession(userSession, true);
 
@@ -739,12 +823,6 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     @Override
     public UserSessionAdapter getOfflineUserSession(RealmModel realm, String userSessionId) {
         return getUserSession(realm, userSessionId, true);
-    }
-
-    @Override
-    public UserSessionModel getOfflineUserSessionByBrokerSessionId(RealmModel realm, String brokerSessionId) {
-        return this.getUserSessionsStream(realm, UserSessionPredicate.create(realm.getId()).brokerSessionId(brokerSessionId), true)
-                .findFirst().orElse(null);
     }
 
     @Override
@@ -768,11 +846,12 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
 
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(true);
         InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(true);
-        AuthenticatedClientSessionAdapter offlineClientSession = importClientSession(userSessionAdapter, clientSession, userSessionUpdateTx, clientSessionUpdateTx, true);
+        AuthenticatedClientSessionAdapter offlineClientSession = importClientSession(userSessionAdapter, clientSession, userSessionUpdateTx, clientSessionUpdateTx, true, false);
 
         // update timestamp to current time
         offlineClientSession.setTimestamp(Time.currentTime());
         offlineClientSession.getNotes().put(AuthenticatedClientSessionModel.STARTED_AT_NOTE, String.valueOf(offlineClientSession.getTimestamp()));
+        offlineClientSession.getNotes().put(AuthenticatedClientSessionModel.USER_SESSION_STARTED_AT_NOTE, String.valueOf(offlineUserSession.getStarted()));
 
         session.getProvider(UserSessionPersisterProvider.class).createClientSession(clientSession, true);
 
@@ -781,12 +860,7 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
 
     @Override
     public Stream<UserSessionModel> getOfflineUserSessionsStream(RealmModel realm, UserModel user) {
-
-        if (loadOfflineSessionsStatsFromDatabase) {
-            return getUserSessionsFromPersistenceProviderStream(realm, user, true);
-        }
-
-        return getUserSessionsStream(realm, UserSessionPredicate.create(realm.getId()).user(user.getId()), true);
+        return getUserSessionsFromPersistenceProviderStream(realm, user, true);
     }
 
     @Override
@@ -816,7 +890,8 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                     for (Map.Entry<String, AuthenticatedClientSessionModel> entry : persistentUserSession.getAuthenticatedClientSessions().entrySet()) {
                         String clientUUID = entry.getKey();
                         AuthenticatedClientSessionModel clientSession = entry.getValue();
-                        AuthenticatedClientSessionEntity clientSessionToImport = createAuthenticatedClientSessionInstance(clientSession, userSessionEntityToImport.getRealmId(), offline);
+                        AuthenticatedClientSessionEntity clientSessionToImport = createAuthenticatedClientSessionInstance(clientSession,
+                                userSessionEntityToImport.getRealmId(), clientUUID, offline);
 
                         // Update timestamp to same value as userSession. LastSessionRefresh of userSession from DB will have correct value
                         clientSessionToImport.setTimestamp(userSessionEntityToImport.getLastSessionRefresh());
@@ -834,8 +909,18 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                 .collect(Collectors.toMap(sessionEntityWrapper -> sessionEntityWrapper.getEntity().getId(), Function.identity()));
 
         // Directly put all entities to the infinispan cache
-        Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = CacheDecorators.skipCacheLoaders(getCache(offline));
-        cache.putAll(sessionsById);
+        Cache<String, SessionEntityWrapper<UserSessionEntity>> cache = CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(getCache(offline));
+
+        boolean importWithExpiration = sessionsById.size() == 1;
+        if (importWithExpiration) {
+            importSessionsWithExpiration(sessionsById, cache,
+                    offline ? offlineSessionCacheEntryLifespanAdjuster : SessionTimeouts::getUserSessionLifespanMs,
+                    offline ? SessionTimeouts::getOfflineSessionMaxIdleMs : SessionTimeouts::getUserSessionMaxIdleMs);
+        } else {
+            Retry.executeWithBackoff((int iteration) -> {
+                cache.putAll(sessionsById);
+            }, 10, 10);
+        }
 
         // put all entities to the remoteCache (if exists)
         RemoteCache remoteCache = InfinispanUtil.getRemoteCache(cache);
@@ -844,28 +929,42 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                     .map(SessionEntityWrapper::forTransport)
                     .collect(Collectors.toMap(sessionEntityWrapper -> sessionEntityWrapper.getEntity().getId(), Function.identity()));
 
-            Retry.executeWithBackoff((int iteration) -> {
+            if (importWithExpiration) {
+                importSessionsWithExpiration(sessionsByIdForTransport, remoteCache,
+                        offline ? offlineSessionCacheEntryLifespanAdjuster : SessionTimeouts::getUserSessionLifespanMs,
+                        offline ? SessionTimeouts::getOfflineSessionMaxIdleMs : SessionTimeouts::getUserSessionMaxIdleMs);
+            } else {
+                Retry.executeWithBackoff((int iteration) -> {
 
-                try {
-                    remoteCache.putAll(sessionsByIdForTransport);
-                } catch (HotRodClientException re) {
-                    if (log.isDebugEnabled()) {
-                        log.debugf(re, "Failed to put import %d sessions to remoteCache. Iteration '%s'. Will try to retry the task",
-                                sessionsByIdForTransport.size(), iteration);
+                    try {
+                        remoteCache.putAll(sessionsByIdForTransport);
+                    } catch (HotRodClientException re) {
+                        if (log.isDebugEnabled()) {
+                            log.debugf(re, "Failed to put import %d sessions to remoteCache. Iteration '%s'. Will try to retry the task",
+                                    sessionsByIdForTransport.size(), iteration);
+                        }
+
+                        // Rethrow the exception. Retry will take care of handle the exception and eventually retry the operation.
+                        throw re;
                     }
 
-                    // Rethrow the exception. Retry will take care of handle the exception and eventually retry the operation.
-                    throw re;
-                }
-
-            }, 10, 10);
+                }, 10, 10);
+            }
         }
 
         // Import client sessions
-        Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessCache = offline ? offlineClientSessionCache : clientSessionCache;
-        clientSessCache = CacheDecorators.skipCacheLoaders(clientSessCache);
+        Cache<UUID, SessionEntityWrapper<AuthenticatedClientSessionEntity>> clientSessCache =
+                CacheDecorators.skipCacheLoadersIfRemoteStoreIsEnabled(offline ? offlineClientSessionCache : clientSessionCache);
 
-        clientSessCache.putAll(clientSessionsById);
+        if (importWithExpiration) {
+            importSessionsWithExpiration(clientSessionsById, clientSessCache,
+                    offline ? offlineClientSessionCacheEntryLifespanAdjuster : SessionTimeouts::getClientSessionLifespanMs,
+                    offline ? SessionTimeouts::getOfflineClientSessionMaxIdleMs : SessionTimeouts::getClientSessionMaxIdleMs);
+        } else {
+            Retry.executeWithBackoff((int iteration) -> {
+                clientSessCache.putAll(clientSessionsById);
+            }, 10, 10);
+        }
 
         // put all entities to the remoteCache (if exists)
         RemoteCache remoteCacheClientSessions = InfinispanUtil.getRemoteCache(clientSessCache);
@@ -874,31 +973,71 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
                     .map(SessionEntityWrapper::forTransport)
                     .collect(Collectors.toMap(sessionEntityWrapper -> sessionEntityWrapper.getEntity().getId(), Function.identity()));
 
-            Retry.executeWithBackoff((int iteration) -> {
+            if (importWithExpiration) {
+                importSessionsWithExpiration(sessionsByIdForTransport, remoteCacheClientSessions,
+                        offline ? offlineClientSessionCacheEntryLifespanAdjuster : SessionTimeouts::getClientSessionLifespanMs,
+                        offline ? SessionTimeouts::getOfflineClientSessionMaxIdleMs : SessionTimeouts::getClientSessionMaxIdleMs);
+            } else {
+                Retry.executeWithBackoff((int iteration) -> {
 
-                try {
-                    remoteCacheClientSessions.putAll(sessionsByIdForTransport);
-                } catch (HotRodClientException re) {
-                    if (log.isDebugEnabled()) {
-                        log.debugf(re, "Failed to put import %d client sessions to remoteCache. Iteration '%s'. Will try to retry the task",
-                                sessionsByIdForTransport.size(), iteration);
+                    try {
+                        remoteCacheClientSessions.putAll(sessionsByIdForTransport);
+                    } catch (HotRodClientException re) {
+                        if (log.isDebugEnabled()) {
+                            log.debugf(re, "Failed to put import %d client sessions to remoteCache. Iteration '%s'. Will try to retry the task",
+                                    sessionsByIdForTransport.size(), iteration);
+                        }
+
+                        // Rethrow the exception. Retry will take care of handle the exception and eventually retry the operation.
+                        throw re;
                     }
 
-                    // Rethrow the exception. Retry will take care of handle the exception and eventually retry the operation.
-                    throw re;
-                }
-
-            }, 10, 10);
+                }, 10, 10);
+            }
         }
     }
 
+    private <T extends SessionEntity> void importSessionsWithExpiration(Map<? extends Object, SessionEntityWrapper<T>> sessionsById,
+                                                                        BasicCache cache, SessionFunction<T> lifespanMsCalculator,
+                                                                        SessionFunction<T> maxIdleTimeMsCalculator) {
+        sessionsById.forEach((id, sessionEntityWrapper) -> {
+
+            T sessionEntity = sessionEntityWrapper.getEntity();
+            RealmModel currentRealm = session.realms().getRealm(sessionEntity.getRealmId());
+            ClientModel client = sessionEntityWrapper.getClientIfNeeded(currentRealm);
+            long lifespan = lifespanMsCalculator.apply(currentRealm, client, sessionEntity);
+            long maxIdle = maxIdleTimeMsCalculator.apply(currentRealm, client, sessionEntity);
+
+            if (lifespan != SessionTimeouts.ENTRY_EXPIRED_FLAG
+                    && maxIdle != SessionTimeouts.ENTRY_EXPIRED_FLAG) {
+                if (cache instanceof RemoteCache) {
+                    Retry.executeWithBackoff((int iteration) -> {
+
+                        try {
+                            cache.put(id, sessionEntityWrapper, lifespan, TimeUnit.MILLISECONDS, maxIdle, TimeUnit.MILLISECONDS);
+                        } catch (HotRodClientException re) {
+                            if (log.isDebugEnabled()) {
+                                log.debugf(re, "Failed to put import %d sessions to remoteCache. Iteration '%s'. Will try to retry the task",
+                                        sessionsById.size(), iteration);
+                            }
+
+                            // Rethrow the exception. Retry will take care of handle the exception and eventually retry the operation.
+                            throw re;
+                        }
+
+                    }, 10, 10);
+                } else {
+                    cache.put(id, sessionEntityWrapper, lifespan, TimeUnit.MILLISECONDS, maxIdle, TimeUnit.MILLISECONDS);
+                }
+            }
+        });
+    }
 
     // Imports just userSession without it's clientSessions
     protected UserSessionAdapter importUserSession(UserSessionModel userSession, boolean offline) {
         UserSessionEntity entity = createUserSessionEntityInstance(userSession);
 
         InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx = getTransaction(offline);
-        InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx = getClientSessionTransaction(offline);
 
         SessionUpdateTask<UserSessionEntity> importTask = Tasks.addIfAbsentSync();
         userSessionUpdateTx.addTask(userSession.getId(), importTask, entity, UserSessionModel.SessionPersistenceState.PERSISTENT);
@@ -925,7 +1064,7 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         if (userSession instanceof OfflineUserSessionModel) {
             // this is a hack so that UserModel doesn't have to be available when offline token is imported.
             // see related JIRA - KEYCLOAK-5350 and corresponding test
-            OfflineUserSessionModel oline = (OfflineUserSessionModel)userSession;
+            OfflineUserSessionModel oline = (OfflineUserSessionModel) userSession;
             entity.setUser(oline.getUserId());
             // NOTE: Hack
             // We skip calling entity.setLoginUsername(userSession.getLoginUsername())
@@ -945,8 +1084,24 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
     private AuthenticatedClientSessionAdapter importClientSession(UserSessionAdapter sessionToImportInto, AuthenticatedClientSessionModel clientSession,
                                                                   InfinispanChangelogBasedTransaction<String, UserSessionEntity> userSessionUpdateTx,
                                                                   InfinispanChangelogBasedTransaction<UUID, AuthenticatedClientSessionEntity> clientSessionUpdateTx,
-                                                                  boolean offline) {
-        AuthenticatedClientSessionEntity entity = createAuthenticatedClientSessionInstance(clientSession, sessionToImportInto.getRealm().getId(), offline);
+                                                                  boolean offline, boolean checkExpiration) {
+        AuthenticatedClientSessionEntity entity = createAuthenticatedClientSessionInstance(clientSession,
+                sessionToImportInto.getRealm().getId(), clientSession.getClient().getId(), offline);
+
+        // Update timestamp to same value as userSession. LastSessionRefresh of userSession from DB will have correct value
+        entity.setTimestamp(sessionToImportInto.getLastSessionRefresh());
+
+        if (checkExpiration) {
+            SessionFunction<AuthenticatedClientSessionEntity> lifespanChecker = offline
+                    ? offlineClientSessionCacheEntryLifespanAdjuster : SessionTimeouts::getClientSessionLifespanMs;
+            SessionFunction<AuthenticatedClientSessionEntity> idleTimeoutChecker = offline
+                    ? SessionTimeouts::getOfflineClientSessionMaxIdleMs : SessionTimeouts::getClientSessionMaxIdleMs;
+            if (idleTimeoutChecker.apply(sessionToImportInto.getRealm(), clientSession.getClient(), entity) == SessionTimeouts.ENTRY_EXPIRED_FLAG
+                    || lifespanChecker.apply(sessionToImportInto.getRealm(), clientSession.getClient(), entity) == SessionTimeouts.ENTRY_EXPIRED_FLAG) {
+                return null;
+            }
+        }
+
         final UUID clientSessionId = entity.getId();
 
         SessionUpdateTask<AuthenticatedClientSessionEntity> createClientSessionTask = Tasks.addIfAbsentSync();
@@ -958,14 +1113,16 @@ public class InfinispanUserSessionProvider implements UserSessionProvider {
         SessionUpdateTask registerClientSessionTask = new RegisterClientSessionTask(clientSession.getClient().getId(), clientSessionId);
         userSessionUpdateTx.addTask(sessionToImportInto.getId(), registerClientSessionTask);
 
-        return new AuthenticatedClientSessionAdapter(session,this, entity, clientSession.getClient(), sessionToImportInto, clientSessionUpdateTx, offline);
+        return new AuthenticatedClientSessionAdapter(session, this, entity, clientSession.getClient(), sessionToImportInto, clientSessionUpdateTx, offline);
     }
 
 
-    private AuthenticatedClientSessionEntity createAuthenticatedClientSessionInstance(AuthenticatedClientSessionModel clientSession, String realmId, boolean offline) {
+    private AuthenticatedClientSessionEntity createAuthenticatedClientSessionInstance(AuthenticatedClientSessionModel clientSession,
+                                                                                      String realmId, String clientId, boolean offline) {
         final UUID clientSessionId = keyGenerator.generateKeyUUID(session, getClientSessionCache(offline));
         AuthenticatedClientSessionEntity entity = new AuthenticatedClientSessionEntity(clientSessionId);
         entity.setRealmId(realmId);
+        entity.setClientId(clientId);
 
         entity.setAction(clientSession.getAction());
         entity.setAuthMethod(clientSession.getProtocol());

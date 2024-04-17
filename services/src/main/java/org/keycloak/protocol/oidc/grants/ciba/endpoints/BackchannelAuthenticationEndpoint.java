@@ -17,8 +17,9 @@
 package org.keycloak.protocol.oidc.grants.ciba.endpoints;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.jboss.resteasy.annotations.cache.NoCache;
-import org.jboss.resteasy.spi.HttpRequest;
+import org.jboss.logging.Logger;
+import org.jboss.resteasy.reactive.NoCache;
+import org.keycloak.http.HttpRequest;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
 import org.keycloak.events.EventBuilder;
@@ -27,10 +28,11 @@ import org.keycloak.models.CibaConfig;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.OAuth2DeviceCodeModel;
-import org.keycloak.models.OAuth2DeviceTokenStoreProvider;
 import org.keycloak.models.OAuth2DeviceUserCodeModel;
 import org.keycloak.models.RealmModel;
+import org.keycloak.models.SingleUseObjectProvider;
 import org.keycloak.models.UserModel;
+import org.keycloak.protocol.oidc.TokenManager;
 import org.keycloak.protocol.oidc.grants.ciba.CibaGrantType;
 import org.keycloak.protocol.oidc.grants.ciba.channel.AuthenticationChannelProvider;
 import org.keycloak.protocol.oidc.grants.ciba.channel.CIBAAuthenticationRequest;
@@ -43,24 +45,28 @@ import org.keycloak.services.ErrorResponseException;
 import org.keycloak.services.clientpolicy.ClientPolicyException;
 import org.keycloak.util.JsonSerialization;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.POST;
-import javax.ws.rs.Produces;
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 
 import java.util.Collections;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import static org.keycloak.protocol.oidc.OIDCLoginProtocol.ID_TOKEN_HINT;
 import static org.keycloak.protocol.oidc.OIDCLoginProtocol.LOGIN_HINT_PARAM;
 
 public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
 
+    private static final Logger log = Logger.getLogger(BackchannelAuthenticationEndpoint.class);
+
     private final RealmModel realm;
+
+    private static final Pattern BINDING_MESSAGE_VALIDATION = Pattern.compile("^[a-zA-Z0-9-._+/!?#]{1,50}$");
 
     public BackchannelAuthenticationEndpoint(KeycloakSession session, EventBuilder event) {
         super(session, event);
@@ -72,7 +78,8 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
     @NoCache
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response processGrantRequest(@Context HttpRequest httpRequest) {
+    public Response processGrantRequest() {
+        HttpRequest httpRequest = session.getContext().getHttpRequest();
         CIBAAuthenticationRequest request = authorizeClient(httpRequest.getDecodedFormParameters());
 
         try {
@@ -112,6 +119,7 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
                         .build();
             }
         } catch (Exception e) {
+            log.warn("Unexpected failure when processing CIBA authentication request", e);
             throw new ErrorResponseException(OAuthErrorException.SERVER_ERROR, "Failed to send authentication request", Response.Status.SERVICE_UNAVAILABLE);
         }
 
@@ -120,7 +128,7 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
 
     /**
      * TODO: Leverage the device code storage for tracking authentication requests. Not sure if we need a specific storage,
-     * but probably make the {@link OAuth2DeviceTokenStoreProvider} more generic for ciba, device, or any other use case
+     * or we can leverage the {@link SingleUseObjectProvider} for ciba, device, or any other use case
      * that relies on cross-references for unsolicited user authentication requests from devices.
      */
     private void storeAuthenticationRequest(CIBAAuthenticationRequest request, CibaConfig cibaConfig, String authReqId) {
@@ -136,7 +144,7 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
 
         OAuth2DeviceCodeModel deviceCode = OAuth2DeviceCodeModel.create(realm, client,
                 request.getId(), request.getScope(), null, expiresIn, poolingInterval, request.getClientNotificationToken(), authReqId,
-                Collections.emptyMap());
+                Collections.emptyMap(), null, null);
         String authResultId = request.getAuthResultId();
         OAuth2DeviceUserCodeModel userCode = new OAuth2DeviceUserCodeModel(realm, deviceCode.getDeviceCode(),
                 authResultId);
@@ -144,9 +152,10 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
         // To inform "expired_token" to the client, the lifespan of the cache provider is longer than device code
         int lifespanSeconds = expiresIn + poolingInterval + 10;
 
-        OAuth2DeviceTokenStoreProvider store = session.getProvider(OAuth2DeviceTokenStoreProvider.class);
+        SingleUseObjectProvider singleUseStore = session.singleUseObjects();
 
-        store.put(deviceCode, userCode, lifespanSeconds);
+        singleUseStore.put(deviceCode.serializeKey(), lifespanSeconds, deviceCode.toMap());
+        singleUseStore.put(userCode.serializeKey(), lifespanSeconds, userCode.serializeValue());
     }
 
     private CIBAAuthenticationRequest authorizeClient(MultivaluedMap<String, String> params) {
@@ -169,10 +178,17 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "missing parameter : scope",
                     Response.Status.BAD_REQUEST);
         }
+        if (!TokenManager.isValidScope(scope, client)) {
+            throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Invalid scopes: " + scope,
+                    Response.Status.BAD_REQUEST);
+        }
         request.setScope(scope);
 
         // optional parameters
-        if (endpointRequest.getBindingMessage() != null) request.setBindingMessage(endpointRequest.getBindingMessage());
+        if (endpointRequest.getBindingMessage() != null) {
+            validateBindingMessage(endpointRequest.getBindingMessage());
+            request.setBindingMessage(endpointRequest.getBindingMessage());
+        }
         if (endpointRequest.getAcr() != null) request.setAcrValues(endpointRequest.getAcr());
 
         CibaConfig policy = realm.getCibaPolicy();
@@ -225,6 +241,13 @@ public class BackchannelAuthenticationEndpoint extends AbstractCibaEndpoint {
     protected void extractAdditionalParams(BackchannelAuthenticationEndpointRequest endpointRequest, CIBAAuthenticationRequest request) {
         for (String paramName : endpointRequest.getAdditionalReqParams().keySet()) {
             request.setOtherClaims(paramName, endpointRequest.getAdditionalReqParams().get(paramName));
+        }
+    }
+
+    protected void validateBindingMessage(String bindingMessage) {
+        if (!BINDING_MESSAGE_VALIDATION.matcher(bindingMessage).matches()) {
+            throw new ErrorResponseException(OAuthErrorException.INVALID_BINDING_MESSAGE, "the binding_message value has to be max 50 characters in length and must contain only basic plain-text characters without spaces",
+                    Response.Status.BAD_REQUEST);
         }
     }
 

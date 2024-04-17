@@ -19,12 +19,13 @@ package org.keycloak.testsuite.authz;
 import static org.junit.Assert.assertEquals;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
 
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.WebTarget;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriBuilder;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.UriBuilder;
 
 import org.jboss.arquillian.test.api.ArquillianResource;
 import org.junit.Test;
@@ -35,12 +36,9 @@ import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.services.resources.RealmsResource;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.admin.AbstractAdminTest;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude;
-import org.keycloak.testsuite.arquillian.annotation.AuthServerContainerExclude.AuthServer;
 import org.keycloak.testsuite.util.AdminClientUtil;
 import org.keycloak.testsuite.util.OAuthClient;
 
-@AuthServerContainerExclude(AuthServer.REMOTE)
 public class UmaDiscoveryDocumentTest extends AbstractKeycloakTest {
 
     @ArquillianResource
@@ -77,6 +75,44 @@ public class UmaDiscoveryDocumentTest extends AbstractKeycloakTest {
 
             assertEquals(registrationUri + "/authz/protection/permission", configuration.getPermissionEndpoint().toString());
             assertEquals(registrationUri + "/authz/protection/resource_set", configuration.getResourceRegistrationEndpoint().toString());
+        }
+    }
+
+    @Test
+    public void testFetchDiscoveryDocumentUsingFrontEndUrl() {
+        RealmRepresentation test = realmsResouce().realm("test").toRepresentation();
+
+        if (test.getAttributes() == null) {
+            test.setAttributes(new HashMap<>());
+        }
+
+        final String frontendUrl = "https://mykeycloak/auth";
+
+        test.getAttributes().put("frontendUrl", frontendUrl);
+
+        realmsResouce().realm("test").update(test);
+
+        Client client = AdminClientUtil.createResteasyClient();
+        UriBuilder builder = UriBuilder.fromUri(OAuthClient.AUTH_SERVER_ROOT);
+        URI oidcDiscoveryUri = RealmsResource.wellKnownProviderUrl(builder).build("test", UmaWellKnownProviderFactory.PROVIDER_ID);
+        WebTarget oidcDiscoveryTarget = client.target(oidcDiscoveryUri);
+
+        try (Response response = oidcDiscoveryTarget.request().get()) {
+            assertEquals("no-cache, must-revalidate, no-transform, no-store", response.getHeaders().getFirst("Cache-Control"));
+
+            UmaConfiguration configuration = response.readEntity(UmaConfiguration.class);
+
+            String baseBackendUri = UriBuilder
+                    .fromUri(frontendUrl)
+                    .path(RealmsResource.class).path(RealmsResource.class, "getRealmResource").build(realmsResouce().realm("test").toRepresentation().getRealm()).toString();
+            String baseFrontendUri = UriBuilder
+                    .fromUri(frontendUrl)
+                    .path(RealmsResource.class).path(RealmsResource.class, "getRealmResource").scheme("https").host("mykeycloak").port(-1).build(realmsResouce().realm("test").toRepresentation().getRealm()).toString();
+
+            // we're not setting hostname-backchannel-dynamic=true which implies frontend URL is used for backend as well
+            assertEquals(baseBackendUri + "/authz/protection/permission", configuration.getPermissionEndpoint());
+            assertEquals(baseBackendUri + "/authz/protection/permission", configuration.getPermissionEndpoint());
+            assertEquals(baseFrontendUri + "/protocol/openid-connect/auth", configuration.getAuthorizationEndpoint());
         }
     }
 }

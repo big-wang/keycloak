@@ -26,10 +26,11 @@ import org.keycloak.models.ClientModel;
 import org.keycloak.models.LDAPConstants;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
-import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.mappers.UserAttributeMapper;
 import org.keycloak.representations.IDToken;
+import org.keycloak.storage.UserStoragePrivateUtil;
+import org.keycloak.storage.UserStorageUtil;
 import org.keycloak.storage.ldap.LDAPStorageProvider;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.testsuite.util.LDAPRule;
@@ -66,7 +67,6 @@ public class LDAPMultipleAttributesTest extends AbstractLDAPTest {
         return ldapRule;
     }
 
-
     @Override
     protected void afterImportTestRealm() {
         testingClient.server().run(session -> {
@@ -95,8 +95,8 @@ public class LDAPMultipleAttributesTest extends AbstractLDAPTest {
             ldapClient.addRedirectUri("/ldap-portal");
             ldapClient.addRedirectUri("/ldap-portal/*");
             ldapClient.setManagementUrl("/ldap-portal");
-            ldapClient.addProtocolMapper(UserAttributeMapper.createClaimMapper("postalCode", "postal_code", "postal_code", "String", true, true, true));
-            ldapClient.addProtocolMapper(UserAttributeMapper.createClaimMapper("street", "street", "street", "String", true, true, false));
+            ldapClient.addProtocolMapper(UserAttributeMapper.createClaimMapper("postalCode", "postal_code", "postal_code", "String", true, true, true, true));
+            ldapClient.addProtocolMapper(UserAttributeMapper.createClaimMapper("street", "street", "street", "String", true, true, true, false));
             ldapClient.addScopeMapping(appRealm.getRole("user"));
             ldapClient.setSecret("password");
         });
@@ -107,13 +107,13 @@ public class LDAPMultipleAttributesTest extends AbstractLDAPTest {
     public void testUserImport() {
         testingClient.server().run(session -> {
             LDAPTestContext ctx = LDAPTestContext.init(session);
-            session.userCache().clear();
+            UserStorageUtil.userCache(session).clear();
             RealmModel appRealm = ctx.getRealm();
 
             // Test user imported in local storage now
             UserModel user = session.users().getUserByUsername(appRealm, "jbrown");
-            Assert.assertNotNull(session.userLocalStorage().getUserById(appRealm, user.getId()));
-            LDAPTestAsserts.assertUserImported(session.userLocalStorage(), appRealm, "jbrown", "James", "Brown", "jbrown@keycloak.org", "88441");
+            Assert.assertNotNull(UserStoragePrivateUtil.userLocalStorage(session).getUserById(appRealm, user.getId()));
+            LDAPTestAsserts.assertUserImported(UserStoragePrivateUtil.userLocalStorage(session), appRealm, "jbrown", "James", "Brown", "jbrown@keycloak.org", "88441");
         });
     }
 
@@ -122,7 +122,7 @@ public class LDAPMultipleAttributesTest extends AbstractLDAPTest {
     public void testModel() {
         testingClient.server().run(session -> {
             LDAPTestContext ctx = LDAPTestContext.init(session);
-            session.userCache().clear();
+            UserStorageUtil.userCache(session).clear();
             RealmModel appRealm = ctx.getRealm();
 
             UserModel user = session.users().getUserByUsername(appRealm, "bwilson");
@@ -223,7 +223,6 @@ public class LDAPMultipleAttributesTest extends AbstractLDAPTest {
 
         oauth.doLogout(response.getRefreshToken(), "password");
     }
-
 
 
 }

@@ -32,8 +32,8 @@ import org.keycloak.provider.ProviderConfigProperty;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.services.managers.AuthenticationManager;
 
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -77,7 +77,7 @@ public class ValidateUsername extends AbstractDirectGrantAuthenticator {
             return;
         }
 
-        String bruteForceError = getDisabledByBruteForceEventError(context.getProtector(), context.getSession(), context.getRealm(), user);
+        String bruteForceError = getDisabledByBruteForceEventError(context, user);
         if (bruteForceError != null) {
             context.getEvent().user(user);
             context.getEvent().error(bruteForceError);

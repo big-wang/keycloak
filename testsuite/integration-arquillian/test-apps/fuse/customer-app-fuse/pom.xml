@@ -21,7 +21,7 @@
     <parent>
         <artifactId>integration-arquillian-test-apps-fuse-parent</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
 
     <modelVersion>4.0.0</modelVersion>
@@ -46,12 +46,12 @@
             org.apache.http.impl.execchain.*;version=${apache.httpcomponents.fuse.version},
             org.apache.http.*;version=${apache.httpcomponents.httpcore.fuse.version},
             javax.servlet.*;version="[3.1,5)",
-            org.keycloak.adapters.authentication;version="${project.version}";resolution:=optional,
-            org.keycloak.adapters.jetty;version="${project.version}";resolution:=optional,
-            org.keycloak.adapters;version="${project.version}",
-            org.keycloak.constants;version="${project.version}",
-            org.keycloak.util;version="${project.version}",
-            org.keycloak.*;version="${project.version}",
+            org.keycloak.adapters.authentication;version="${fuse.adapter.version}";resolution:=optional,
+            org.keycloak.adapters.jetty;version="${fuse.adapter.version}";resolution:=optional,
+            org.keycloak.adapters;version="${fuse.adapter.version}",
+            org.keycloak.constants;version="${fuse.adapter.version}",
+            org.keycloak.util;version="${fuse.adapter.version}",
+            org.keycloak.*;version="${fuse.adapter.version}",
             *;resolution:=optional
         </keycloak.osgi.import>
         <keycloak.osgi.private>
@@ -113,8 +113,8 @@
                         <supportedProjectType>war</supportedProjectType>
                     </supportedProjectTypes>
                     <instructions>
-                        <Webapp-Context>customer-portal</Webapp-Context>
-                        <Web-ContextPath>customer-portal</Web-ContextPath>
+                        <Webapp-Context>/customer-portal</Webapp-Context>
+                        <Web-ContextPath>/customer-portal</Web-ContextPath>
                         <Embed-Directory>WEB-INF/lib</Embed-Directory>
                         <Bundle-ClassPath>.,WEB-INF/classes</Bundle-ClassPath>
                         <Bundle-Name>${project.name}</Bundle-Name>

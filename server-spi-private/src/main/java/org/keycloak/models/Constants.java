@@ -63,6 +63,10 @@ public final class Constants {
     // 60 days
     public static final int DEFAULT_OFFLINE_SESSION_MAX_LIFESPAN = 5184000;
     public static final String DEFAULT_SIGNATURE_ALGORITHM = Algorithm.RS256;
+    public static final String INTERNAL_SIGNATURE_ALGORITHM = Algorithm.HS512;
+
+    public static final int DEFAULT_SESSION_IDLE_TIMEOUT = 1800; // 30 minutes
+    public static final int DEFAULT_SESSION_MAX_LIFESPAN = 36000; // 10 hours
 
     public static final String DEFAULT_WEBAUTHN_POLICY_SIGNATURE_ALGORITHMS = Algorithm.ES256;
     public static final String DEFAULT_WEBAUTHN_POLICY_RP_ENTITY_NAME = "keycloak";
@@ -73,10 +77,12 @@ public final class Constants {
     public static final String WEBAUTHN_PASSWORDLESS_PREFIX = "Passwordless";
 
     public static final String VERIFY_EMAIL_KEY = "VERIFY_EMAIL_KEY";
-    public static final String VERIFY_EMAIL_CODE = "VERIFY_EMAIL_CODE";
     public static final String EXECUTION = "execution";
     public static final String CLIENT_ID = "client_id";
     public static final String TAB_ID = "tab_id";
+    public static final String CLIENT_DATA = "client_data";
+
+    public static final String SKIP_LOGOUT = "skip_logout";
     public static final String KEY = "key";
 
     public static final String KC_ACTION = "kc_action";
@@ -101,6 +107,8 @@ public final class Constants {
 
     // Groups already assigned by a mapper when updating brokered users.
     public static final String MAPPER_GRANTED_GROUPS = "MAPPER_GRANTED_GROUPS";
+
+    public static final String MAPPER_SESSION_NOTES = "MAPPER_SESSION_NOTES";
 
     // Indication to admin-rest-endpoint that realm keys should be re-generated
     public static final String GENERATE = "GENERATE";
@@ -130,4 +138,34 @@ public final class Constants {
     public static final String CLIENT_PROFILES = "client-policies.profiles";
     public static final String CLIENT_POLICIES = "client-policies.policies";
 
+
+    // Authentication session note, which contains loa of current authentication in progress
+    public static final String LEVEL_OF_AUTHENTICATION = "level-of-authentication";
+
+    // Key in authentication execution config (AuthenticationExecutionModel), storing the configured authentication reference value
+    public static final String AUTHENTICATION_EXECUTION_REFERENCE_VALUE = "default.reference.value";
+    public static final String AUTHENTICATION_EXECUTION_REFERENCE_MAX_AGE = "default.reference.maxAge";
+
+    // Authentication session note containing a serialized map of successfully completed authentication executions and their associated times
+    public static final String AUTHENTICATORS_COMPLETED = "authenticators-completed";
+
+    // Authentication session (and user session) note, which contains map with authenticated levels and the times of their authentications,
+    // so it is possible to check when particular level expires and needs to be re-authenticated
+    public static final String LOA_MAP = "loa-map";
+
+    public static final String REQUESTED_LEVEL_OF_AUTHENTICATION = "requested-level-of-authentication";
+    public static final String FORCE_LEVEL_OF_AUTHENTICATION = "force-level-of-authentication";
+    public static final String ACR_LOA_MAP = "acr.loa.map";
+    public static final String DEFAULT_ACR_VALUES = "default.acr.values";
+    public static final int MINIMUM_LOA = 0;
+    public static final int NO_LOA = -1;
+
+    public static final String SESSION_NOTE_LIGHTWEIGHT_USER = "keycloak.userModel";
+
+    public static final String USE_LIGHTWEIGHT_ACCESS_TOKEN_ENABLED = "client.use.lightweight.access.token.enabled";
+
+    public static final String TOTP_SECRET_KEY = "TOTP_SECRET_KEY";
+
+    // Sent to clients when authentication session expired, but user is already logged-in in current browser
+    public static final String AUTHENTICATION_EXPIRED_MESSAGE = "authentication_expired";
 }

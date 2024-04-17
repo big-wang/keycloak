@@ -21,6 +21,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import org.jboss.logging.Logger;
 import org.keycloak.authentication.ClientAuthenticator;
 import org.keycloak.authentication.ClientAuthenticatorFactory;
+import org.keycloak.common.Profile;
 import org.keycloak.common.constants.ServiceAccountConstants;
 import org.keycloak.common.util.Time;
 import org.keycloak.models.ClientModel;
@@ -41,6 +42,8 @@ import org.keycloak.protocol.saml.SamlProtocol;
 import org.keycloak.representations.adapters.config.BaseRealmConfig;
 import org.keycloak.representations.adapters.config.PolicyEnforcerConfig;
 import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.client.clienttype.ClientType;
+import org.keycloak.client.clienttype.ClientTypeManager;
 import org.keycloak.sessions.AuthenticationSessionProvider;
 
 import java.net.URI;
@@ -79,6 +82,12 @@ public class ClientManager {
      * @return
      */
     public static ClientModel createClient(KeycloakSession session, RealmModel realm, ClientRepresentation rep) {
+        if (Profile.isFeatureEnabled(Profile.Feature.CLIENT_TYPES) && rep.getType() != null) {
+            ClientTypeManager mgr = session.getProvider(ClientTypeManager.class);
+            ClientType clientType = mgr.getClientType(realm, rep.getType());
+            clientType.onCreate(rep);
+        }
+
         ClientModel client = RepresentationToModel.createClient(session, realm, rep);
 
         if (rep.getProtocol() != null) {
@@ -159,19 +168,24 @@ public class ClientManager {
             String username = ServiceAccountConstants.SERVICE_ACCOUNT_USER_PREFIX + client.getClientId();
             logger.debugf("Creating service account user '%s'", username);
 
-            // Don't use federation for service account user
-            UserModel user = realmManager.getSession().userLocalStorage().addUser(client.getRealm(), username);
+            UserModel user = realmManager.getSession().users().addUser(client.getRealm(), username);
             user.setEnabled(true);
             user.setServiceAccountClientLink(client.getId());
         }
 
-        // Add protocol mappers to retrieve clientId in access token
+        // Add protocol mappers to retrieve clientId in access token. Ignore this in case type is filled (protocol mappers can be explicitly specified for particular specific type)
+        if (!Profile.isFeatureEnabled(Profile.Feature.CLIENT_TYPES) || client.getType() == null) {
+            addServiceAccountProtocolMappers(client);
+        }
+    }
+
+    private void addServiceAccountProtocolMappers(ClientModel client) {
         if (client.getProtocolMapperByName(OIDCLoginProtocol.LOGIN_PROTOCOL, ServiceAccountConstants.CLIENT_ID_PROTOCOL_MAPPER) == null) {
             logger.debugf("Creating service account protocol mapper '%s' for client '%s'", ServiceAccountConstants.CLIENT_ID_PROTOCOL_MAPPER, client.getClientId());
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_ID_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_ID,
                     ServiceAccountConstants.CLIENT_ID, "String",
-                    true, true);
+                    true, true, true);
             client.addProtocolMapper(protocolMapper);
         }
 
@@ -181,7 +195,7 @@ public class ClientManager {
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_HOST_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_HOST,
                     ServiceAccountConstants.CLIENT_HOST, "String",
-                    true, true);
+                    true, true, true);
             client.addProtocolMapper(protocolMapper);
         }
 
@@ -190,7 +204,7 @@ public class ClientManager {
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_ADDRESS_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_ADDRESS,
                     ServiceAccountConstants.CLIENT_ADDRESS, "String",
-                    true, true);
+                    true, true, true);
             client.addProtocolMapper(protocolMapper);
         }
     }

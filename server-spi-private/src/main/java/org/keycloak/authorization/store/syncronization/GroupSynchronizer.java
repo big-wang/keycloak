@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,7 @@ public class GroupSynchronizer implements Synchronizer<GroupModel.GroupRemovedEv
         attributes.put(Policy.FilterOption.CONFIG, new String[] {"groups", group.getId()});
         attributes.put(Policy.FilterOption.ANY_OWNER, Policy.FilterOption.EMPTY_FILTER);
 
-        List<Policy> search = policyStore.findByResourceServer(attributes, null, -1, -1);
+        List<Policy> search = policyStore.find(null, attributes, null, null);
 
         for (Policy policy : search) {
             PolicyProviderFactory policyFactory = authorizationProvider.getProviderFactory(policy.getType());
@@ -60,12 +60,7 @@ public class GroupSynchronizer implements Synchronizer<GroupModel.GroupRemovedEv
 
             groups.removeIf(groupDefinition -> groupDefinition.getId().equals(group.getId()));
 
-            if (groups.isEmpty()) {
-                policyFactory.onRemove(policy, authorizationProvider);
-                policyStore.delete(policy.getId());
-            } else {
-                policyFactory.onUpdate(policy, representation, authorizationProvider);
-            }
+            policyFactory.onUpdate(policy, representation, authorizationProvider);
         }
     }
 }

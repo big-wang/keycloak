@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,8 @@ import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.models.jpa.JpaModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
 
-import javax.persistence.EntityManager;
-import javax.persistence.Query;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -116,8 +116,9 @@ public class ResourceAdapter extends AbstractAuthorizationModel implements Resou
     @Override
     public List<Scope> getScopes() {
         List<Scope> scopes = new LinkedList<>();
+        ResourceServer resourceServer = getResourceServer();
         for (ScopeEntity scope : entity.getScopes()) {
-            scopes.add(storeFactory.getScopeStore().findById(scope.getId(), entity.getResourceServer()));
+            scopes.add(storeFactory.getScopeStore().findById(resourceServer, scope.getId()));
         }
 
         return Collections.unmodifiableList(scopes);
@@ -136,8 +137,8 @@ public class ResourceAdapter extends AbstractAuthorizationModel implements Resou
     }
 
     @Override
-    public String getResourceServer() {
-        return entity.getResourceServer();
+    public ResourceServer getResourceServer() {
+        return storeFactory.getResourceServerStore().findById(entity.getResourceServer());
     }
 
     @Override

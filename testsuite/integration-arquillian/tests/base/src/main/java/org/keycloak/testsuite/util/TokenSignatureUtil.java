@@ -24,11 +24,12 @@ import java.security.Signature;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.X509EncodedKeySpec;
 
-import javax.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response;
 
 import org.jboss.logging.Logger;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.ClientResource;
+import org.keycloak.common.crypto.CryptoIntegration;
 import org.keycloak.common.util.Base64;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.crypto.Algorithm;
@@ -117,6 +118,10 @@ public class TokenSignatureUtil {
             case Algorithm.ES512:
                 registerKeyProvider(realm, "ecdsaEllipticCurveKey", convertAlgorithmToECDomainParamNistRep(jwaAlgorithmName), GeneratedEcdsaKeyProviderFactory.ID, adminClient, testContext);
                 break;
+            case Algorithm.Ed25519:
+            case Algorithm.Ed448:
+                registerKeyProvider(realm, "eddsaEllipticCurveKey", jwaAlgorithmName, "eddsa-generated", adminClient, testContext);
+                break;
         }
     }
 
@@ -136,7 +141,7 @@ public class TokenSignatureUtil {
     private static void registerKeyProvider(String realm, String providerSpecificKey, String providerSpecificValue, String providerId, Keycloak adminClient, TestContext testContext) {
         long priority = System.currentTimeMillis();
 
-        ComponentRepresentation rep = createKeyRep("valid", providerId);
+        ComponentRepresentation rep = createKeyRep("valid", providerId, adminClient);
         rep.setConfig(new MultivaluedHashMap<>());
         rep.getConfig().putSingle("priority", Long.toString(priority));
         rep.getConfig().putSingle(providerSpecificKey, providerSpecificValue);
@@ -147,10 +152,10 @@ public class TokenSignatureUtil {
         }
     }
 
-    private static ComponentRepresentation createKeyRep(String name, String providerId) {
+    private static ComponentRepresentation createKeyRep(String name, String providerId, Keycloak adminClient) {
         ComponentRepresentation rep = new ComponentRepresentation();
         rep.setName(name);
-        rep.setParentId(TEST_REALM_NAME);
+        rep.setParentId(adminClient.realm(TEST_REALM_NAME).toRepresentation().getId());
         rep.setProviderId(providerId);
         rep.setProviderType(KeyProvider.class.getName());
         rep.setConfig(new MultivaluedHashMap<>());
@@ -187,8 +192,7 @@ public class TokenSignatureUtil {
 
     private static Signature getSignature(String sigAlgName) {
         try {
-            // use Bouncy Castle for signature verification intentionally
-            Signature signature = Signature.getInstance(JavaAlgorithm.getJavaAlgorithm(sigAlgName), "BC");
+            Signature signature = CryptoIntegration.getProvider().getSignature(JavaAlgorithm.getJavaAlgorithm(sigAlgName));
             return signature;
         } catch (Exception e) {
             throw new RuntimeException(e);

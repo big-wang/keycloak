@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Red Hat, Inc. and/or its affiliates
+ * Copyright 2022 Red Hat, Inc. and/or its affiliates
  * and other contributors as indicated by the @author tags.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,17 +20,17 @@ import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.Status;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.Status;
 
-import org.jboss.resteasy.annotations.cache.NoCache;
+import org.jboss.resteasy.reactive.NoCache;
 import org.keycloak.authorization.AuthorizationProvider;
 import org.keycloak.authorization.model.Policy;
 import org.keycloak.authorization.model.ResourceServer;
@@ -39,7 +39,6 @@ import org.keycloak.authorization.store.PolicyStore;
 import org.keycloak.authorization.store.StoreFactory;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
-import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.utils.ModelToRepresentation;
 import org.keycloak.models.utils.RepresentationToModel;
 import org.keycloak.representations.idm.authorization.AbstractPolicyRepresentation;
@@ -108,13 +107,16 @@ public class PolicyResourceService {
         PolicyStore policyStore = storeFactory.getPolicyStore();
         PolicyProviderFactory resource = getProviderFactory(policy.getType());
 
+        //to be able to access all lazy loaded fields it's needed to create representation before it's deleted
+        AbstractPolicyRepresentation policyRep = toRepresentation(policy, authorization);
+
         if (resource != null) {
             resource.onRemove(policy, authorization);
         }
 
         policyStore.delete(policy.getId());
 
-        audit(toRepresentation(policy, authorization), OperationType.DELETE);
+        audit(policyRep, OperationType.DELETE);
 
         return Response.noContent().build();
     }
@@ -155,7 +157,7 @@ public class PolicyResourceService {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        List<Policy> policies = authorization.getStoreFactory().getPolicyStore().findDependentPolicies(policy.getId(), resourceServer.getId());
+        List<Policy> policies = authorization.getStoreFactory().getPolicyStore().findDependentPolicies(resourceServer, policy.getId());
 
         return Response.ok(policies.stream().map(policy -> {
             PolicyRepresentation representation1 = new PolicyRepresentation();

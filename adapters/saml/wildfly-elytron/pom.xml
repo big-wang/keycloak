@@ -21,7 +21,7 @@
     <parent>
         <artifactId>keycloak-parent</artifactId>
         <groupId>org.keycloak</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
         <relativePath>../../../pom.xml</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
@@ -76,12 +76,22 @@
             <artifactId>wildfly-elytron</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.wildfly.security.elytron-web</groupId>
+            <artifactId>undertow-server</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.infinispan</groupId>
             <artifactId>infinispan-cachestore-remote</artifactId>
+        </dependency>
+        <dependency>
+            <!-- adding it explictly, as Keycloak's parent excludes it to have full control over Jakarta EE vs. Java EE -->
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-client-hotrod</artifactId>
         </dependency>
         <dependency>
             <groupId>junit</groupId>

@@ -21,7 +21,7 @@
     <parent>
         <artifactId>integration-arquillian-test-apps-fuse-parent</artifactId>
         <groupId>org.keycloak.testsuite</groupId>
-        <version>16.0.0-SNAPSHOT</version>
+        <version>999.0.0-SNAPSHOT</version>
     </parent>
 
     <modelVersion>4.0.0</modelVersion>
@@ -41,8 +41,8 @@
             META-INF.cxf;version="[2.7,3.4)",
             org.apache.cxf.transport.http;version="[2.7,3.4)",
             org.apache.cxf.*;version="[2.7,3.4)",
-            org.keycloak.*;version="${project.version}",
-            org.keycloak.adapters.authentication;version="${project.version}";resolution:=optional,
+            org.keycloak.*;version="${fuse.adapter.version}",
+            org.keycloak.adapters.authentication;version="${fuse.adapter.version}";resolution:=optional,
             javax.servlet.*;version="[3.1,5)",
             *;resolution:=optional
         </keycloak.osgi.import>

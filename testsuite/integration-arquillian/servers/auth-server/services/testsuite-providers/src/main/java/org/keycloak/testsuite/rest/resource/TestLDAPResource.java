@@ -19,19 +19,22 @@ package org.keycloak.testsuite.rest.resource;
 
 import java.util.Map;
 
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.component.ComponentModel;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.LDAPConstants;
 import org.keycloak.models.RealmModel;
+import org.keycloak.models.RoleModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.storage.CacheableStorageProviderModel;
 import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.ldap.LDAPStorageProvider;
@@ -74,7 +77,7 @@ public class TestLDAPResource {
         MultivaluedHashMap<String, String> ldapConfig = toComponentConfig(ldapCfg);
         ldapConfig.putSingle(LDAPConstants.SYNC_REGISTRATIONS, "true");
         ldapConfig.putSingle(LDAPConstants.EDIT_MODE, UserStorageProvider.EditMode.WRITABLE.toString());
-
+        ldapConfig.putSingle(LDAPConstants.CONNECTION_POOLING, "true");
         UserStorageProviderModel model = new UserStorageProviderModel();
         model.setLastSync(0);
         model.setChangedSyncPeriod(-1);
@@ -159,8 +162,8 @@ public class TestLDAPResource {
         ComponentModel mapperModel = LDAPTestUtils.getSubcomponentByName(realm, ldapModel, "groupsMapper");
         new GroupLDAPStorageMapperFactory().create(session, mapperModel).syncDataFromFederationProviderToKeycloak(realm);
 
-        realm.addDefaultGroup(KeycloakModelUtils.findGroupByPath(realm, "/defaultGroup1/defaultGroup11"));
-        realm.addDefaultGroup(KeycloakModelUtils.findGroupByPath(realm, "/defaultGroup1/defaultGroup12"));
+        realm.addDefaultGroup(KeycloakModelUtils.findGroupByPath(session, realm, "/defaultGroup1/defaultGroup11"));
+        realm.addDefaultGroup(KeycloakModelUtils.findGroupByPath(session, realm, "/defaultGroup1/defaultGroup12"));
 
         // Delete all LDAP users
         LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, realm);
@@ -180,7 +183,7 @@ public class TestLDAPResource {
     }
 
     /**
-     * Prepare groups LDAP tests. Creates some LDAP mappers as well as some built-in GRoups and users in LDAP
+     * Prepare roles LDAP tests. Creates some LDAP mappers as well as some built-in GRoups and users in LDAP
      */
     @POST
     @Path("/configure-roles")
@@ -223,6 +226,72 @@ public class TestLDAPResource {
         // Sync LDAP groups to Keycloak DB roles
         ComponentModel mapperModel = LDAPTestUtils.getSubcomponentByName(realm, ldapModel, "rolesMapper");
         new RoleLDAPStorageMapperFactory().create(session, mapperModel).syncDataFromFederationProviderToKeycloak(realm);
+    }
+
+    /**
+     * Prepare roles LDAP tests. Creates some LDAP mappers as well as some built-in GRoups and users in LDAP
+     */
+    @POST
+    @Path("/configure-hardcoded-roles")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.APPLICATION_JSON)
+    public void prepareHardcodedRolesLDAPTest() {
+        ComponentModel ldapCompModel = LDAPTestUtils.getLdapProviderModel(realm);
+        LDAPStorageProvider ldapFedProvider = LDAPTestUtils.getLdapProvider(session, ldapCompModel);
+        UserStorageProviderModel ldapModel = ldapFedProvider.getModel();
+        ldapModel.setCachePolicy(CacheableStorageProviderModel.CachePolicy.NO_CACHE);
+        ldapModel.setImportEnabled(false);
+        ldapModel.getConfig().putSingle(LDAPConstants.EDIT_MODE, UserStorageProvider.EditMode.READ_ONLY.name());
+        realm.updateComponent(ldapModel);
+
+        // Add a hardcoded and composite role
+        RoleModel clientRole = realm.getClientByClientId("admin-cli").addRole("client_role");
+        RoleModel hardcodedRole = realm.addRole("hardcoded_role");
+        hardcodedRole.addCompositeRole(clientRole);
+
+        // Add role mapper
+        LDAPTestUtils.addOrUpdateHardcodedRoleMapper(realm, ldapModel);
+
+        // Remove all LDAP users
+        LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, realm);
+
+        // Add some LDAP users for testing
+        LDAPObject john = LDAPTestUtils.addLDAPUser(ldapFedProvider, realm, "johnkeycloak", "John", "Doe", "john@email.org", null, "1234");
+        LDAPTestUtils.updateLDAPPassword(ldapFedProvider, john, "Password1");
+    }
+
+    /**
+     * Prepare roles LDAP tests. Creates some LDAP mappers as well as some built-in GRoups and users in LDAP
+     */
+    @POST
+    @Path("/configure-hardcoded-groups")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(MediaType.APPLICATION_JSON)
+    public void prepareHardcodedGroupsLDAPTest() {
+        ComponentModel ldapCompModel = LDAPTestUtils.getLdapProviderModel(realm);
+        LDAPStorageProvider ldapFedProvider = LDAPTestUtils.getLdapProvider(session, ldapCompModel);
+        UserStorageProviderModel ldapModel = ldapFedProvider.getModel();
+        ldapModel.setCachePolicy(CacheableStorageProviderModel.CachePolicy.NO_CACHE);
+        ldapModel.setImportEnabled(false);
+        ldapModel.getConfig().putSingle(LDAPConstants.EDIT_MODE, UserStorageProvider.EditMode.READ_ONLY.name());
+        realm.updateComponent(ldapModel);
+
+        // Add a hardcoded group hierarchy with role
+        RoleModel clientRole = realm.getClientByClientId("admin-cli").addRole("client_role");
+        GroupModel parentGroup = realm.createGroup("parent_group");
+        parentGroup.grantRole(clientRole);
+        GroupModel hardcodedGroup = realm.createGroup("hardcoded_group");
+        parentGroup.addChild(hardcodedGroup);
+
+        // Add group mapper
+        LDAPTestUtils.addOrUpdateHardcodedGroupMapper(realm, ldapModel);
+
+        // Remove all LDAP users
+        LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, realm);
+
+        // Add some LDAP users for testing
+        LDAPObject john = LDAPTestUtils.addLDAPUser(ldapFedProvider, realm, "johnkeycloak", "John", "Doe", "john@email.org", null, "1234");
+        LDAPTestUtils.updateLDAPPassword(ldapFedProvider, john, "Password1");
     }
 
     /**

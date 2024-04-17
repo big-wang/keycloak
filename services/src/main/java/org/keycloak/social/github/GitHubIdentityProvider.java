@@ -18,7 +18,7 @@
 package org.keycloak.social.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
+import jakarta.ws.rs.core.Response;
 import java.util.Iterator;
 import org.keycloak.broker.oidc.AbstractOAuth2IdentityProvider;
 import org.keycloak.broker.oidc.OAuth2IdentityProviderConfig;
@@ -35,18 +35,79 @@ import org.keycloak.models.KeycloakSession;
  */
 public class GitHubIdentityProvider extends AbstractOAuth2IdentityProvider implements SocialIdentityProvider {
 
-	public static final String AUTH_URL = "https://github.com/login/oauth/authorize";
-	public static final String TOKEN_URL = "https://github.com/login/oauth/access_token";
-	public static final String PROFILE_URL = "https://api.github.com/user";
-	public static final String EMAIL_URL = "https://api.github.com/user/emails";
-	public static final String DEFAULT_SCOPE = "user:email";
+    public static final String DEFAULT_BASE_URL = "https://github.com";
+    public static final String AUTH_FRAGMENT = "/login/oauth/authorize";
+    public static final String TOKEN_FRAGMENT = "/login/oauth/access_token";
+    public static final String DEFAULT_AUTH_URL = DEFAULT_BASE_URL + AUTH_FRAGMENT;
+    public static final String DEFAULT_TOKEN_URL = DEFAULT_BASE_URL + TOKEN_FRAGMENT;
+    /** @deprecated Use {@link #DEFAULT_AUTH_URL} instead. */
+    @Deprecated
+    public static final String AUTH_URL = DEFAULT_AUTH_URL;
+    /** @deprecated Use {@link #DEFAULT_TOKEN_URL} instead. */
+    @Deprecated
+    public static final String TOKEN_URL = DEFAULT_TOKEN_URL;
 
-	public GitHubIdentityProvider(KeycloakSession session, OAuth2IdentityProviderConfig config) {
-		super(session, config);
-		config.setAuthorizationUrl(AUTH_URL);
-		config.setTokenUrl(TOKEN_URL);
-		config.setUserInfoUrl(PROFILE_URL);
-	}
+    public static final String DEFAULT_API_URL = "https://api.github.com";
+    public static final String PROFILE_FRAGMENT = "/user";
+    public static final String EMAIL_FRAGMENT = "/user/emails";
+    public static final String DEFAULT_PROFILE_URL = DEFAULT_API_URL + PROFILE_FRAGMENT;
+    public static final String DEFAULT_EMAIL_URL = DEFAULT_API_URL + EMAIL_FRAGMENT;
+    /** @deprecated Use {@link #DEFAULT_PROFILE_URL} instead. */
+    @Deprecated
+    public static final String PROFILE_URL = DEFAULT_PROFILE_URL;
+    /** @deprecated Use {@link #DEFAULT_EMAIL_URL} instead. */
+    @Deprecated
+    public static final String EMAIL_URL = DEFAULT_EMAIL_URL;
+
+    public static final String DEFAULT_SCOPE = "user:email";
+
+    /** Base URL key in config map. */
+    protected static final String BASE_URL_KEY = "baseUrl";
+    /** API URL key in config map. */
+    protected static final String API_URL_KEY = "apiUrl";
+    /** Email URL key in config map. */
+    protected static final String EMAIL_URL_KEY = "emailUrl";
+
+    private final String authUrl;
+    private final String tokenUrl;
+    private final String profileUrl;
+    private final String emailUrl;
+
+    public GitHubIdentityProvider(KeycloakSession session, OAuth2IdentityProviderConfig config) {
+        super(session, config);
+
+        String baseUrl = getUrlFromConfig(config, BASE_URL_KEY, DEFAULT_BASE_URL);
+        String apiUrl = getUrlFromConfig(config, API_URL_KEY, DEFAULT_API_URL);
+
+        authUrl = baseUrl + AUTH_FRAGMENT;
+        tokenUrl = baseUrl + TOKEN_FRAGMENT;
+        profileUrl = apiUrl + PROFILE_FRAGMENT;
+        emailUrl = apiUrl + EMAIL_FRAGMENT;
+
+        config.setAuthorizationUrl(authUrl);
+        config.setTokenUrl(tokenUrl);
+        config.setUserInfoUrl(profileUrl);
+        config.getConfig().put(EMAIL_URL_KEY, emailUrl);
+    }
+
+    /**
+     * Get URL from config with default value fallback.
+     *
+     * @param config Identity provider configuration.
+     * @param key Key to look for value in config's config map.
+     * @param defaultValue Default value if value at key is null or empty string.
+     * @return URL for specified key in the configuration with default value fallback.
+     */
+    protected static String getUrlFromConfig(OAuth2IdentityProviderConfig config, String key, String defaultValue) {
+        String url = config.getConfig().get(key);
+        if (url == null || url.trim().isEmpty()) {
+            url = defaultValue;
+        }
+        if (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        return url;
+    }
 
 	@Override
 	protected boolean supportsExternalExchange() {
@@ -55,7 +116,7 @@ public class GitHubIdentityProvider extends AbstractOAuth2IdentityProvider imple
 
 	@Override
 	protected String getProfileEndpointForValidation(EventBuilder event) {
-		return PROFILE_URL;
+		return profileUrl;
 	}
 
 	@Override
@@ -72,42 +133,62 @@ public class GitHubIdentityProvider extends AbstractOAuth2IdentityProvider imple
 		AbstractJsonUserAttributeMapper.storeUserProfileForMapper(user, profile, getConfig().getAlias());
 
 		return user;
-
 	}
-
 
 	@Override
 	protected BrokeredIdentityContext doGetFederatedIdentity(String accessToken) {
-		try {
-			JsonNode profile = SimpleHttp.doGet(PROFILE_URL, session).header("Authorization", "Bearer " + accessToken).asJson();
+		try (SimpleHttp.Response response = SimpleHttp.doGet(profileUrl, session)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Accept", "application/json")
+                        .asResponse()) {
 
-			BrokeredIdentityContext user = extractIdentityFromProfile(null, profile);
+                    if (Response.Status.fromStatusCode(response.getStatus()).getFamily() != Response.Status.Family.SUCCESSFUL) {
+                        logger.warnf("Profile endpoint returned an error (%d): %s", response.getStatus(), response.asString());
+                        throw new IdentityBrokerException("Profile could not be retrieved from the github endpoint");
+                    }
 
-			if (user.getEmail() == null) {
-				user.setEmail(searchEmail(accessToken));
-			}
+                    JsonNode profile = response.asJson();
+                    logger.tracef("profile retrieved from github: %s", profile);
+                    BrokeredIdentityContext user = extractIdentityFromProfile(null, profile);
 
-			return user;
+                    if (user.getEmail() == null) {
+                        user.setEmail(searchEmail(accessToken));
+                    }
+
+                    return user;
 		} catch (Exception e) {
-			throw new IdentityBrokerException("Could not obtain user profile from github.", e);
+			throw new IdentityBrokerException("Profile could not be retrieved from the github endpoint", e);
 		}
 	}
 
 	private String searchEmail(String accessToken) {
-		try {
-			ArrayNode emails = (ArrayNode) SimpleHttp.doGet(EMAIL_URL, session).header("Authorization", "Bearer " + accessToken).asJson();
+		try (SimpleHttp.Response response = SimpleHttp.doGet(emailUrl, session)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Accept", "application/json")
+                        .asResponse()) {
 
-			Iterator<JsonNode> loop = emails.elements();
-			while (loop.hasNext()) {
-				JsonNode mail = loop.next();
-				if (mail.get("primary").asBoolean()) {
-					return getJsonProperty(mail, "email");
-				}
-			}
+                    if (Response.Status.fromStatusCode(response.getStatus()).getFamily() != Response.Status.Family.SUCCESSFUL) {
+                        logger.warnf("Primary email endpoint returned an error (%d): %s", response.getStatus(), response.asString());
+                        throw new IdentityBrokerException("Primary email could not be retrieved from the github endpoint");
+                    }
+
+                    JsonNode emails = response.asJson();
+                    logger.tracef("emails retrieved from github: %s", emails);
+                    if (emails.isArray()) {
+                        Iterator<JsonNode> loop = emails.elements();
+                        while (loop.hasNext()) {
+                            JsonNode mail = loop.next();
+                            JsonNode primary = mail.get("primary");
+                            if (primary != null && primary.asBoolean()) {
+                                return getJsonProperty(mail, "email");
+                            }
+                        }
+                    }
+
+                    throw new IdentityBrokerException("Primary email from github is not found in the user's email list.");
 		} catch (Exception e) {
-			throw new IdentityBrokerException("Could not obtain user email from github.", e);
+			throw new IdentityBrokerException("Primary email could not be retrieved from the github endpoint", e);
 		}
-		throw new IdentityBrokerException("Primary email from github is not found.");
 	}
 
 	@Override
